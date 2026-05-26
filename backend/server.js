@@ -14,21 +14,18 @@ import Groq from 'groq-sdk';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
 const DATA_DIR = path.join(process.cwd(), 'data');
 
-app.use(express.json());        // depois os middlewares
+app.use(express.json());
 
-// ✅ DEPOIS cria as rotas
+// Rota health check
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ 
-    success: true, 
-    status: 'online' 
-  });
+  res.status(200).json({ success: true, status: 'online' });
 });
 
-// ... suas outras rotas
+// ... suas outras rotas ...
 
+// ✅ APENAS UMA declaração de PORT
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
