@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 // ✅ MUDOU AQUI — aponta pro Render ao invés de localhost
-const API_URL = 'https://strawfield-api.onrender.com';
+const API_URL = 'https://strawfieldapi.onrender.com';
 
 /* ============================================================
    STRAWFIELD v2.0 — Interface Moderna com Auth & Chat History
