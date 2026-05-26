@@ -1,0 +1,30 @@
+{
+  "StrawField": {
+    "username": "StrawField",
+    "passwordHash": "$2a$10$RcOk8CvnNIMtqDnmRFyXN.kO9XG2NBun0eH82F9n0jbbIQj5IAJ92",
+    "displayName": "StrawField",
+    "token": "eaffa133-c51e-4d8f-803d-726ff83af0db",
+    "createdAt": "2026-05-25T21:40:52.681Z"
+  },
+  "Caguei": {
+    "username": "Caguei",
+    "passwordHash": "$2a$10$cULkMi9whs7yaNWrRr20HOT732Wh.4nVMpidJh0as5r0gvwfsDMv.",
+    "displayName": "Caguei",
+    "token": "9d2652da-a2f6-4ddc-a6ce-80b3ea07bac6",
+    "createdAt": "2026-05-25T21:42:12.104Z"
+  },
+  "guest_e249c335": {
+    "username": "guest_e249c335",
+    "displayName": "Convidado",
+    "token": "96ae016f-4a2c-487f-b1ae-70d5efec00f6",
+    "isGuest": true,
+    "createdAt": "2026-05-25T22:07:01.200Z"
+  },
+  "Sokka": {
+    "username": "Sokka",
+    "passwordHash": "$2a$10$gCPIPXVlkA5Nnd2xcQAm/.J5SiEDft.QZ2MxL7hDcG/nUch6OLDTS",
+    "displayName": "sokka_é_lindo",
+    "token": "78c814ac-2278-4cf8-83d4-52ded2997cbe",
+    "createdAt": "2026-05-25T22:07:36.246Z"
+  }
+}

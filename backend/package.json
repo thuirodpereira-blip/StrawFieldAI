@@ -1,0 +1,22 @@
+{
+  "name": "strawfield-backend",
+  "version": "2.0.0",
+  "description": "StrawField AI Backend com auth, chats e histórico",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "groq-sdk": "^0.7.0",
+    "morgan": "^1.10.0",
+    "openai": "^4.52.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  }
+}
