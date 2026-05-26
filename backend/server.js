@@ -13,20 +13,26 @@ import Groq from 'groq-sdk';
 
 dotenv.config();
 
-// ============================================
-// ROTA DE HEALTH CHECK - ADICIONAR ISSO
-// ============================================
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ 
-    success: true, 
-    status: 'online',
-    timestamp: new Date().toISOString()
-  });
-});
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DATA_DIR = path.join(process.cwd(), 'data');
+
+app.use(express.json());        // depois os middlewares
+
+// ✅ DEPOIS cria as rotas
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ 
+    success: true, 
+    status: 'online' 
+  });
+});
+
+// ... suas outras rotas
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
 
 // Garante que a pasta data existe
 await fs.mkdir(DATA_DIR, { recursive: true });
