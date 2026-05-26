@@ -5,7 +5,8 @@ import {
   ChevronLeft, ChevronRight, Sparkles, X, Menu
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// ✅ MUDOU AQUI — aponta pro Render ao invés de localhost
+const API_URL = 'https://strawfield-api.onrender.com';
 
 /* ============================================================
    STRAWFIELD v2.0 — Interface Moderna com Auth & Chat History
