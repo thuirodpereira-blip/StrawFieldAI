@@ -16,20 +16,19 @@ dotenv.config();
 const app = express();
 const DATA_DIR = path.join(process.cwd(), 'data');
 
+// ===== MIDDLEWARES (ordem correta, ANTES das rotas) =====
+app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json());
+app.use(morgan('combined'));
 
-// Rota health check
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ success: true, status: 'online' });
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: { success: false, error: 'Muitas requisições. Aguarde.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-
-// ... suas outras rotas ...
-
-// ✅ APENAS UMA declaração de PORT
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.use('/api/', limiter);
 
 // Garante que a pasta data existe
 await fs.mkdir(DATA_DIR, { recursive: true });
@@ -62,20 +61,6 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
 
-// ===== MIDDLEWARES =====
-app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
-app.use(express.json());
-app.use(morgan('combined'));
-
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
-  message: { success: false, error: 'Muitas requisições. Aguarde.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/api/', limiter);
-
 // ===== SCHEMAS =====
 const registerSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Apenas letras, números e underscore'),
@@ -107,7 +92,7 @@ Regras:
 - Responda de forma direta e completa. Evite respostas vazias.
 - Use português brasileiro natural.`;
 
-// ===== MODERAÇÃO (palavras exatas, sem falsos positivos) =====
+// ===== MODERAÇÃO =====
 const FORBIDDEN = new Set([
   'idiota','imbecil','estupido','estúpido','burro','retardado',
   'filhodaputa','filho da puta','merda','bosta','cu','caralho','porra',
@@ -188,8 +173,6 @@ async function callAI(messages) {
 }
 
 // ===== AUTH ROUTES =====
-
-// Registro
 app.post('/api/auth/register', async (req, res) => {
   const parse = registerSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ success: false, error: parse.error.issues.map(i => i.message).join('; ') });
@@ -210,7 +193,6 @@ app.post('/api/auth/register', async (req, res) => {
   };
   await writeJson('users.json', users);
 
-  // Cria chats vazio para o user
   const chats = await readJson('chats.json');
   chats[username] = [];
   await writeJson('chats.json', chats);
@@ -218,7 +200,6 @@ app.post('/api/auth/register', async (req, res) => {
   res.json({ success: true, token, user: { username, displayName: displayName || username } });
 });
 
-// Login
 app.post('/api/auth/login', async (req, res) => {
   const parse = loginSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ success: false, error: 'Dados inválidos.' });
@@ -231,7 +212,6 @@ app.post('/api/auth/login', async (req, res) => {
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ success: false, error: 'Senha incorreta.' });
 
-  // Gera novo token
   const token = uuidv4();
   user.token = token;
   await writeJson('users.json', users);
@@ -239,7 +219,6 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ success: true, token, user: { username: user.username, displayName: user.displayName } });
 });
 
-// Guest (modo convidado, sem conta)
 app.post('/api/auth/guest', async (req, res) => {
   const guestId = 'guest_' + uuidv4().slice(0, 8);
   const token = uuidv4();
@@ -260,7 +239,6 @@ app.post('/api/auth/guest', async (req, res) => {
   res.json({ success: true, token, user: { username: guestId, displayName: 'Convidado' } });
 });
 
-// Verifica token
 app.get('/api/auth/me', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
@@ -273,15 +251,6 @@ app.get('/api/auth/me', async (req, res) => {
 });
 
 // ===== CHAT ROUTES =====
-
-function getUserFromToken(req) {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token) return null;
-  const users = readJson('users.json'); // sync não funciona aqui, vou fazer async nas rotas
-  return null;
-}
-
-// Lista chats do usuário
 app.get('/api/chats', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
@@ -295,7 +264,6 @@ app.get('/api/chats', async (req, res) => {
   res.json({ success: true, chats: userChats.map(c => ({ id: c.id, title: c.title, updatedAt: c.updatedAt })) });
 });
 
-// Cria novo chat
 app.post('/api/chats', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
@@ -316,7 +284,6 @@ app.post('/api/chats', async (req, res) => {
   res.json({ success: true, chat: newChat });
 });
 
-// Pega mensagens de um chat
 app.get('/api/chats/:id', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
@@ -332,7 +299,6 @@ app.get('/api/chats/:id', async (req, res) => {
   res.json({ success: true, chat });
 });
 
-// Deleta chat
 app.delete('/api/chats/:id', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
@@ -348,7 +314,6 @@ app.delete('/api/chats/:id', async (req, res) => {
   res.json({ success: true, message: 'Chat deletado.' });
 });
 
-// Envia mensagem para um chat
 app.post('/api/chats/:id/message', async (req, res) => {
   const timestamp = new Date().toISOString();
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -366,10 +331,8 @@ app.post('/api/chats/:id/message', async (req, res) => {
   const chat = (chats[user.username] || []).find(c => c.id === req.params.id);
   if (!chat) return res.status(404).json({ success: false, error: 'Chat não encontrado.' });
 
-  // Adiciona mensagem do usuário
   chat.messages.push({ role: 'user', content: message, timestamp });
 
-  // Monta contexto para IA (só envia role e content, remove timestamp e outros campos)
   const history = chat.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
@@ -386,7 +349,6 @@ app.post('/api/chats/:id/message', async (req, res) => {
     chat.messages.push({ role: 'assistant', content: responseText, timestamp: new Date().toISOString() });
     chat.updatedAt = new Date().toISOString();
 
-    // Atualiza título se for a primeira mensagem
     if (chat.messages.length === 2 && chat.title === 'Nova Conversa') {
       chat.title = message.slice(0, 40) + (message.length > 40 ? '...' : '');
     }
@@ -399,7 +361,7 @@ app.post('/api/chats/:id/message', async (req, res) => {
   }
 });
 
-// Health
+// ===== HEALTH CHECK =====
 app.get('/api/health', async (req, res) => {
   const providers = [];
   if (OLLAMA_URL) providers.push('ollama');
@@ -409,14 +371,17 @@ app.get('/api/health', async (req, res) => {
   res.json({ success: true, status: 'online', providers, timestamp: new Date().toISOString() });
 });
 
+// ===== ERROR HANDLERS =====
 app.use((req, res) => res.status(404).json({ success: false, error: 'Rota não encontrada.' }));
 app.use((err, req, res, next) => {
   console.error('Erro global:', err.stack);
   res.status(500).json({ success: false, error: 'Erro interno inesperado.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 StrawField Backend rodando em http://localhost:${PORT}`);
+// ===== INICIALIZAÇÃO =====
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 StrawField Backend rodando na porta ${PORT}`);
   const p = [OLLAMA_URL ? 'Ollama' : '', groq ? 'Groq' : '', GEMINI_API_KEY ? 'Gemini' : '', openai ? 'OpenAI' : ''].filter(Boolean);
   console.log(`   Provedores: ${p.join(', ') || 'NENHUM — configure o .env!'}`);
 });
