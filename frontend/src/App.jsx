@@ -2,17 +2,17 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus,
   MessageSquare, History, LogOut, LogIn, UserPlus, Ghost,
-  ChevronLeft, ChevronRight, Sparkles, X, Menu
+  ChevronLeft, ChevronRight, Sparkles, X, Menu, Settings as SettingsIcon, Heart
 } from 'lucide-react';
 import Agents from './Agents';
 import Settings from './Settings';
 import Credits from './Credits';
 
-// ✅ MUDOU AQUI — aponta pro Render ao invés de localhost
+// ✅ API URL do Render
 const API_URL = 'https://strawfieldapi.onrender.com';
 
 /* ============================================================
-   STRAWFIELD v2.0 — Interface Moderna com Auth & Chat History
+   STRAWFIELD v2.1 — Com Agentes, Configurações e Créditos
    ============================================================ */
 
 export default function App() {
@@ -35,50 +35,14 @@ export default function App() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // ===== ESTADOS NOVOS: AGENTES, CONFIGURAÇÕES, CRÉDITOS =====
   const [currentView, setCurrentView] = useState('chat'); // 'chat' | 'agents' | 'settings'
-const [currentAgent, setCurrentAgent] = useState('strawfield');
-const [currentModel, setCurrentModel] = useState('groq');
-const [showCredits, setShowCredits] = useState(false);
+  const [currentAgent, setCurrentAgent] = useState('strawfield');
+  const [currentModel, setCurrentModel] = useState('groq');
+  const [showCredits, setShowCredits] = useState(false);
 
   const chatEndRef = useRef(null);
-}
-
-// ============================================
-// FUNÇÃO DE ENVIAR MENSAGEM (procure no App.jsx)
-// ============================================
-
-// ✅ CERTO — adiciona "async":
-const sendMessage = async (text) => {
-
-  const response = await fetch(`${API_URL}/api/chats/${activeChatId}/message`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`,
-  },
-  body: JSON.stringify({ 
-    message: text,
-    agent: currentAgent  // ← COLE AQUI DENTRO DO JSON.stringify
-  }),
-});
-
-{/* Botão Agentes */}
-<button onClick={() => setCurrentView('agents')} className="...">
-  <Bot className="w-5 h-5" />
-  Agentes
-</button>
-
-{/* Botão Configurações */}
-<button onClick={() => setCurrentView('settings')} className="...">
-  <SettingsIcon className="w-5 h-5" />
-  Configurações
-</button>
-
-{/* Botão Créditos */}
-<button onClick={() => setShowCredits(true)} className="...">
-  <Heart className="w-5 h-5" />
-  Créditos
-</button>
 
   // ===== DETECTA MOBILE =====
   useEffect(() => {
@@ -183,11 +147,27 @@ const sendMessage = async (text) => {
     } catch (err) { console.error(err); }
   };
 
+  // ===== LIMPAR HISTÓRICO =====
+  const handleClearHistory = async () => {
+    if (!token) return;
+    if (!confirm('Isso vai apagar TODAS as conversas. Continuar?')) return;
+    try {
+      for (const chat of chats) {
+        await fetch(`${API_URL}/api/chats/${chat.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+      setChats([]);
+      setActiveChatId(null);
+      setMessages([]);
+    } catch (err) { console.error(err); }
+  };
+
   // ===== ENVIAR MENSAGEM =====
   const handleSend = async () => {
     if (!input.trim() || loading || !token) return;
 
-    // Se não houver chat ativo, cria um novo automaticamente
     let currentChatId = activeChatId;
     if (!currentChatId) {
       try {
@@ -223,14 +203,13 @@ const sendMessage = async (text) => {
       const r = await fetch(`${API_URL}/api/chats/${currentChatId}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify({ message: userMessage, agent: currentAgent }),
       });
       const data = await r.json();
       if (!r.ok || !data.success) throw new Error(data.error || 'Erro na IA.');
       if (!data.data || typeof data.data !== 'string') throw new Error('Resposta inválida.');
 
       setMessages(prev => [...prev, { role: 'assistant', content: data.data }]);
-      // Atualiza título na lista
       setChats(prev => prev.map(c => c.id === currentChatId ? { ...c, title: c.title === 'Nova Conversa' ? userMessage.slice(0, 40) + (userMessage.length > 40 ? '...' : '') : c.title } : c));
       loadChats();
     } catch (err) {
@@ -289,40 +268,6 @@ const sendMessage = async (text) => {
     } catch (err) { alert('Erro de conexão.'); }
   };
 
-  {currentView === 'agents' && (
-  <Agents 
-    currentAgent={currentAgent} 
-    onSelect={(id) => { setCurrentAgent(id); setCurrentView('chat'); }}
-    darkMode={darkMode}
-  />
-)}
-
-{currentView === 'settings' && (
-  <Settings
-    darkMode={darkMode}
-    onToggleTheme={() => setDarkMode(!darkMode)}
-    currentModel={currentModel}
-    onChangeModel={setCurrentModel}
-    onClearHistory={handleClearHistory}
-    onBack={() => setCurrentView('chat')}
-    currentAgent={currentAgent}
-    onGoToAgents={() => setCurrentView('agents')}
-  />
-)}
-
-{currentView === 'chat' && (
-  <div className="flex h-screen w-full overflow-hidden">
-    {/* AQUI DENTRO COLOCA TODO O CÓDIGO DO CHAT QUE JÁ EXISTIA NO SEU APP.JSX */}
-    {/* sidebar, header, mensagens, input — TUDO que já funcionava */}
-  </div>
-)}
-
-<Credits 
-  isOpen={showCredits} 
-  onClose={() => setShowCredits(false)} 
-  darkMode={darkMode} 
-/>
-
   const handleGuest = async () => {
     try {
       const r = await fetch(`${API_URL}/api/auth/guest`, { method: 'POST' });
@@ -345,6 +290,7 @@ const sendMessage = async (text) => {
     setActiveChatId(null);
     setMessages([]);
     setView('login');
+    setCurrentView('chat');
   };
 
   // ===== RENDER: LOGIN / REGISTER =====
@@ -352,7 +298,6 @@ const sendMessage = async (text) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-200 dark:from-slate-950 dark:to-slate-900 p-4 transition-colors duration-300">
         <div className="w-full max-w-md">
-          {/* Logo */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/25 mb-4">
               <Sparkles className="w-8 h-8 text-white" />
@@ -416,6 +361,42 @@ const sendMessage = async (text) => {
             )}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // ===== RENDER: VIEWS (AGENTES / CONFIGURAÇÕES / CHAT) =====
+  if (currentView === 'agents') {
+    return (
+      <div className="h-screen bg-slate-50 dark:bg-slate-950">
+        <div className="flex items-center gap-3 px-4 py-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+          <button onClick={() => setCurrentView('chat')} className="p-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <h1 className="text-lg font-bold text-slate-800 dark:text-white">Voltar ao Chat</h1>
+        </div>
+        <Agents
+          currentAgent={currentAgent}
+          onSelect={(id) => { setCurrentAgent(id); setCurrentView('chat'); }}
+          darkMode={darkMode}
+        />
+      </div>
+    );
+  }
+
+  if (currentView === 'settings') {
+    return (
+      <div className="h-screen bg-slate-50 dark:bg-slate-950">
+        <Settings
+          darkMode={darkMode}
+          onToggleTheme={() => setDarkMode(!darkMode)}
+          currentModel={currentModel}
+          onChangeModel={setCurrentModel}
+          onClearHistory={handleClearHistory}
+          onBack={() => setCurrentView('chat')}
+          currentAgent={currentAgent}
+          onGoToAgents={() => setCurrentView('agents')}
+        />
       </div>
     );
   }
@@ -487,6 +468,27 @@ const sendMessage = async (text) => {
         {/* Sidebar Footer */}
         <div className="p-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
           <button
+            onClick={() => setCurrentView('agents')}
+            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
+          >
+            <Bot className="w-4 h-4" />
+            Agente: <span className="font-medium text-pink-400 capitalize">{currentAgent}</span>
+          </button>
+          <button
+            onClick={() => setCurrentView('settings')}
+            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
+          >
+            <SettingsIcon className="w-4 h-4" />
+            Configurações
+          </button>
+          <button
+            onClick={() => setShowCredits(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
+          >
+            <Heart className="w-4 h-4" />
+            Créditos
+          </button>
+          <button
             onClick={() => setDarkMode(!darkMode)}
             className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
           >
@@ -535,7 +537,7 @@ const sendMessage = async (text) => {
               </div>
               <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200 mb-1">Comece uma conversa</h3>
               <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm">
-                Pergunte algo, peça um código, peça ajuda com um projeto — a StrawField está pronta!
+                Agente atual: <span className="font-bold text-pink-400 capitalize">{currentAgent}</span>
               </p>
             </div>
           )}
@@ -605,7 +607,7 @@ const sendMessage = async (text) => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Mensagem StrawField..."
+              placeholder={`Mensagem ${currentAgent === 'strawfield' ? 'StrawField' : currentAgent}...`}
               rows={1}
               className="flex-1 resize-none max-h-32 px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl border-0 focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-400 scrollbar-thin text-sm"
             />
@@ -622,6 +624,13 @@ const sendMessage = async (text) => {
           </p>
         </footer>
       </main>
+
+      {/* Modal de Créditos */}
+      <Credits
+        isOpen={showCredits}
+        onClose={() => setShowCredits(false)}
+        darkMode={darkMode}
+      />
     </div>
   );
 }
