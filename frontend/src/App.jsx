@@ -4,6 +4,9 @@ import {
   MessageSquare, History, LogOut, LogIn, UserPlus, Ghost,
   ChevronLeft, ChevronRight, Sparkles, X, Menu
 } from 'lucide-react';
+import Agents from './Agents';
+import Settings from './Settings';
+import Credits from './Credits';
 
 // ✅ MUDOU AQUI — aponta pro Render ao invés de localhost
 const API_URL = 'https://strawfieldapi.onrender.com';
@@ -32,8 +35,46 @@ export default function App() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [currentView, setCurrentView] = useState('chat'); // 'chat' | 'agents' | 'settings'
+const [currentAgent, setCurrentAgent] = useState('strawfield');
+const [currentModel, setCurrentModel] = useState('groq');
+const [showCredits, setShowCredits] = useState(false);
 
   const chatEndRef = useRef(null);
+
+// ============================================
+// FUNÇÃO DE ENVIAR MENSAGEM (procure no App.jsx)
+// ============================================
+
+const response = await fetch(`${API_URL}/api/chats/${activeChatId}/message`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+  },
+  body: JSON.stringify({ 
+    message: text,
+    agent: currentAgent  // ← COLE AQUI DENTRO DO JSON.stringify
+  }),
+});
+
+{/* Botão Agentes */}
+<button onClick={() => setCurrentView('agents')} className="...">
+  <Bot className="w-5 h-5" />
+  Agentes
+</button>
+
+{/* Botão Configurações */}
+<button onClick={() => setCurrentView('settings')} className="...">
+  <SettingsIcon className="w-5 h-5" />
+  Configurações
+</button>
+
+{/* Botão Créditos */}
+<button onClick={() => setShowCredits(true)} className="...">
+  <Heart className="w-5 h-5" />
+  Créditos
+</button>
 
   // ===== DETECTA MOBILE =====
   useEffect(() => {
@@ -243,6 +284,40 @@ export default function App() {
       }
     } catch (err) { alert('Erro de conexão.'); }
   };
+
+  {currentView === 'agents' && (
+  <Agents 
+    currentAgent={currentAgent} 
+    onSelect={(id) => { setCurrentAgent(id); setCurrentView('chat'); }}
+    darkMode={darkMode}
+  />
+)}
+
+{currentView === 'settings' && (
+  <Settings
+    darkMode={darkMode}
+    onToggleTheme={() => setDarkMode(!darkMode)}
+    currentModel={currentModel}
+    onChangeModel={setCurrentModel}
+    onClearHistory={handleClearHistory}
+    onBack={() => setCurrentView('chat')}
+    currentAgent={currentAgent}
+    onGoToAgents={() => setCurrentView('agents')}
+  />
+)}
+
+{currentView === 'chat' && (
+  <div className="flex h-screen w-full overflow-hidden">
+    {/* AQUI DENTRO COLOCA TODO O CÓDIGO DO CHAT QUE JÁ EXISTIA NO SEU APP.JSX */}
+    {/* sidebar, header, mensagens, input — TUDO que já funcionava */}
+  </div>
+)}
+
+<Credits 
+  isOpen={showCredits} 
+  onClose={() => setShowCredits(false)} 
+  darkMode={darkMode} 
+/>
 
   const handleGuest = async () => {
     try {
