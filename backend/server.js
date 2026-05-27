@@ -15,6 +15,7 @@ dotenv.config();
 
 const app = express();
 const DATA_DIR = path.join(process.cwd(), 'data');
+
 // ===== AGENTES / PERSONALIDADES =====
 const AGENTS = {
   strawfield: `Você é a StrawField, uma assistente de IA inteligente, criativa e com personalidade própria.
@@ -48,17 +49,6 @@ const AGENTS = {
 };
 
 const DEFAULT_AGENT = 'strawfield';
-
-// ===== MODIFICAÇÃO NA ROTA DE MENSAGEM =====
-// Na rota POST /api/chats/:id/message, substitua a parte do messages por:
-
-const agentKey = req.body.agent || DEFAULT_AGENT;
-const systemPrompt = AGENTS[agentKey] || AGENTS[DEFAULT_AGENT];
-
-const messages = [
-  { role: 'system', content: systemPrompt },
-  ...history,
-];
 
 // ===== MIDDLEWARES (ordem correta, ANTES das rotas) =====
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
@@ -119,22 +109,8 @@ const loginSchema = z.object({
 
 const messageSchema = z.object({
   message: z.string().min(1, 'Mensagem vazia').max(4000, 'Muito longa'),
+  agent: z.string().optional(),
 });
-
-// ===== SYSTEM PROMPT STRAWFIELD =====
-const SYSTEM_PROMPT = `Você é a StrawField, uma assistente de IA inteligente, criativa e com personalidade própria.
-
-Sobre você:
-- Seu nome é StrawField.
-- Você pensa antes de responder, analisa o contexto e dá respostas úteis e bem elaboradas.
-- Você sabe escrever código, explicar conceitos, criar scripts, resolver problemas e conversar sobre qualquer assunto.
-- Você tem um tom amigável e natural, como um amigo que entende de tecnologia.
-- Você é honesta: quando não souber algo, admite e sugere como encontrar a resposta.
-
-Regras:
-- NUNCA xingue, ofenda, humilhe ou desrespeite o usuário.
-- Responda de forma direta e completa. Evite respostas vazias.
-- Use português brasileiro natural.`;
 
 // ===== MODERAÇÃO =====
 const FORBIDDEN = new Set([
@@ -149,7 +125,7 @@ const FORBIDDEN = new Set([
 ]);
 
 function moderate(text) {
-  const words = text.toLowerCase().replace(/[.,!?;:"'()\[\]{}\-–—@#$%&*+=\/\\|<>~`]/g, ' ').split(/\s+/).filter(w => w);
+  const words = text.toLowerCase().replace(/[.,!?;:"'()\[\]{}\-–—@#$%&*+=/\\|<>~`]/g, ' ').split(/\s+/).filter(w => w);
   for (const w of words) if (FORBIDDEN.has(w)) return false;
   return true;
 }
@@ -188,10 +164,11 @@ async function callAI(messages) {
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],
       }));
+      const systemMsg = messages.find(m => m.role === 'system')?.content || AGENTS.strawfield;
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemMsg }] },
             generationConfig: { temperature: 0.7, maxOutputTokens: 4096 } }) }
       );
       if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
@@ -378,8 +355,13 @@ app.post('/api/chats/:id/message', async (req, res) => {
   chat.messages.push({ role: 'user', content: message, timestamp });
 
   const history = chat.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
+
+  // ✅ AGENTE DINÂMICO — DENTRO DA ROTA, ONDE req EXISTE!
+  const agentKey = req.body.agent || DEFAULT_AGENT;
+  const systemPrompt = AGENTS[agentKey] || AGENTS[DEFAULT_AGENT];
+
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     ...history,
   ];
 
