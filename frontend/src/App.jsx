@@ -41,12 +41,16 @@ const [currentModel, setCurrentModel] = useState('groq');
 const [showCredits, setShowCredits] = useState(false);
 
   const chatEndRef = useRef(null);
+}
 
 // ============================================
 // FUNÇÃO DE ENVIAR MENSAGEM (procure no App.jsx)
 // ============================================
 
-const response = await fetch(`${API_URL}/api/chats/${activeChatId}/message`, {
+// ✅ CERTO — adiciona "async":
+const sendMessage = async (text) => {
+
+  const response = await fetch(`${API_URL}/api/chats/${activeChatId}/message`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
