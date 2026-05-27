@@ -10,11 +10,50 @@ import fs from 'fs/promises';
 import path from 'path';
 import OpenAI from 'openai';
 import Groq from 'groq-sdk';
+import multer from 'multer';
+
+// ===== FINGERPRINT BAN HELPERS =====
+async function getBannedFingerprints() {
+  try {
+    const raw = await fs.readFile(path.join(DATA_DIR, 'bans.json'), 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function addBan(fingerprint, reason = '') {
+  const bans = await getBannedFingerprints();
+  bans[fingerprint] = { bannedAt: new Date().toISOString(), reason };
+  await fs.writeFile(path.join(DATA_DIR, 'bans.json'), JSON.stringify(bans, null, 2), 'utf-8');
+}
+
+async function removeBan(fingerprint) {
+  const bans = await getBannedFingerprints();
+  delete bans[fingerprint];
+  await fs.writeFile(path.join(DATA_DIR, 'bans.json'), JSON.stringify(bans, null, 2), 'utf-8');
+}
+
+// Middleware de verificação de ban
+async function checkBan(req, res, next) {
+  const fp = req.headers['x-device-fingerprint'];
+  if (!fp) return next();
+  const bans = await getBannedFingerprints();
+  if (bans[fp]) {
+    return res.status(403).json({ success: false, error: 'Dispositivo banido. Contate o suporte.' });
+  }
+  next();
+}
 
 dotenv.config();
 
 const app = express();
 const DATA_DIR = path.join(process.cwd(), 'data');
+const UPLOAD_DIR = path.join(process.cwd(), 'data', 'uploads');
+
+// Garante pastas existem
+await fs.mkdir(DATA_DIR, { recursive: true });
+await fs.mkdir(UPLOAD_DIR, { recursive: true });
 
 // ===== AGENTES / PERSONALIDADES =====
 const AGENTS = {
@@ -50,10 +89,11 @@ const AGENTS = {
 
 const DEFAULT_AGENT = 'strawfield';
 
-// ===== MIDDLEWARES (ordem correta, ANTES das rotas) =====
+// ===== MIDDLEWARES =====
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json());
 app.use(morgan('combined'));
+app.use(checkBan); // ← VERIFICA BAN ANTES DE TODAS AS ROTAS
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -64,8 +104,24 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Garante que a pasta data existe
-await fs.mkdir(DATA_DIR, { recursive: true });
+// ===== MULTER (UPLOAD DE ARQUIVOS) =====
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, unique + path.extname(file.originalname));
+  }
+});
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowed = /jpeg|jpg|png|gif|pdf|txt|js|jsx|ts|tsx|py|html|css|json|md/;
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.test(ext)) cb(null, true);
+    else cb(new Error('Tipo de arquivo não suportado.'));
+  }
+});
 
 // ===== HELPERS DE PERSISTÊNCIA JSON =====
 async function readJson(file) {
@@ -132,7 +188,7 @@ function moderate(text) {
 
 const SAFE_FALLBACK = 'Prefiro manter nossa conversa no respeito. Estou aqui para ajudar de forma construtiva. O que você precisa?';
 
-// ===== CHAMADA ÀS IAs =====
+// ===== CHAMADA ÀS IAs (SEM STREAMING) =====
 async function callAI(messages) {
   const errors = [];
 
@@ -191,6 +247,22 @@ async function callAI(messages) {
   }
 
   throw new Error(`Nenhum provedor disponível.\n${errors.join('\n')}`);
+}
+
+// ===== CHAMADA STREAMING (GROQ) =====
+async function* callAIStream(messages) {
+  if (!groq) throw new Error('Streaming apenas disponível com Groq.');
+
+  const stream = await groq.chat.completions.create({
+    model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+    messages, temperature: 0.7, max_tokens: 4096,
+    stream: true,
+  });
+
+  for await (const chunk of stream) {
+    const content = chunk.choices[0]?.delta?.content;
+    if (content) yield content;
+  }
 }
 
 // ===== AUTH ROUTES =====
@@ -268,7 +340,8 @@ app.get('/api/auth/me', async (req, res) => {
   const user = Object.values(users).find(u => u.token === token);
   if (!user) return res.status(401).json({ success: false, error: 'Token inválido.' });
 
-  res.json({ success: true, user: { username: user.username, displayName: user.displayName, isGuest: !!user.isGuest } });
+  const isAdmin = user.username === 'StrawField';
+  res.json({ success: true, user: { username: user.username, displayName: user.displayName, isGuest: !!user.isGuest, isAdmin } });
 });
 
 // ===== CHAT ROUTES =====
@@ -335,6 +408,29 @@ app.delete('/api/chats/:id', async (req, res) => {
   res.json({ success: true, message: 'Chat deletado.' });
 });
 
+// ===== UPLOAD DE ARQUIVO =====
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
+
+  if (!req.file) return res.status(400).json({ success: false, error: 'Nenhum arquivo enviado.' });
+
+  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+  res.json({ 
+    success: true, 
+    file: { 
+      url: fileUrl, 
+      name: req.file.originalname, 
+      size: req.file.size,
+      type: req.file.mimetype
+    } 
+  });
+});
+
+// Servir arquivos estáticos
+app.use('/uploads', express.static(UPLOAD_DIR));
+
+// ===== MENSAGEM NORMAL (SEM STREAMING) =====
 app.post('/api/chats/:id/message', async (req, res) => {
   const timestamp = new Date().toISOString();
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -355,11 +451,8 @@ app.post('/api/chats/:id/message', async (req, res) => {
   chat.messages.push({ role: 'user', content: message, timestamp });
 
   const history = chat.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
-
-  // ✅ AGENTE DINÂMICO — DENTRO DA ROTA, ONDE req EXISTE!
   const agentKey = req.body.agent || DEFAULT_AGENT;
   const systemPrompt = AGENTS[agentKey] || AGENTS[DEFAULT_AGENT];
-
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -387,6 +480,115 @@ app.post('/api/chats/:id/message', async (req, res) => {
   }
 });
 
+// ===== MENSAGEM COM STREAMING =====
+app.post('/api/chats/:id/message/stream', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
+
+  const users = await readJson('users.json');
+  const user = Object.values(users).find(u => u.token === token);
+  if (!user) return res.status(401).json({ success: false, error: 'Token inválido.' });
+
+  const parse = messageSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ success: false, error: 'Mensagem inválida.' });
+
+  const { message } = parse.data;
+  const chats = await readJson('chats.json');
+  const chat = (chats[user.username] || []).find(c => c.id === req.params.id);
+  if (!chat) return res.status(404).json({ success: false, error: 'Chat não encontrado.' });
+
+  chat.messages.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+
+  const history = chat.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
+  const agentKey = req.body.agent || DEFAULT_AGENT;
+  const systemPrompt = AGENTS[agentKey] || AGENTS[DEFAULT_AGENT];
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+  ];
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  let fullResponse = '';
+
+  try {
+    for await (const chunk of callAIStream(messages)) {
+      fullResponse += chunk;
+      res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+    }
+
+    if (!moderate(fullResponse)) {
+      fullResponse = SAFE_FALLBACK;
+    }
+
+    chat.messages.push({ role: 'assistant', content: fullResponse, timestamp: new Date().toISOString() });
+    chat.updatedAt = new Date().toISOString();
+
+    if (chat.messages.length === 2 && chat.title === 'Nova Conversa') {
+      chat.title = message.slice(0, 40) + (message.length > 40 ? '...' : '');
+    }
+
+    await writeJson('chats.json', chats);
+    res.write(`data: ${JSON.stringify({ done: true, data: fullResponse })}\n\n`);
+    res.end();
+  } catch (error) {
+    console.error('Erro IA Stream:', error);
+    res.write(`data: ${JSON.stringify({ error: error.message || 'Erro interno.' })}\n\n`);
+    res.end();
+  }
+});
+
+// ===== ADMIN ROUTES (BAN) =====
+app.post('/api/admin/ban', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
+
+  const users = await readJson('users.json');
+  const user = Object.values(users).find(u => u.token === token);
+  if (!user || user.username !== 'StrawField') {
+    return res.status(403).json({ success: false, error: 'Acesso negado. Apenas StrawField pode banir.' });
+  }
+
+  const { fingerprint, reason } = req.body;
+  if (!fingerprint) return res.status(400).json({ success: false, error: 'Fingerprint obrigatório.' });
+
+  await addBan(fingerprint, reason || 'Sem motivo');
+  res.json({ success: true, message: 'Dispositivo banido com sucesso.' });
+});
+
+app.post('/api/admin/unban', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
+
+  const users = await readJson('users.json');
+  const user = Object.values(users).find(u => u.token === token);
+  if (!user || user.username !== 'StrawField') {
+    return res.status(403).json({ success: false, error: 'Acesso negado.' });
+  }
+
+  const { fingerprint } = req.body;
+  if (!fingerprint) return res.status(400).json({ success: false, error: 'Fingerprint obrigatório.' });
+
+  await removeBan(fingerprint);
+  res.json({ success: true, message: 'Dispositivo desbanido com sucesso.' });
+});
+
+app.get('/api/admin/bans', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
+
+  const users = await readJson('users.json');
+  const user = Object.values(users).find(u => u.token === token);
+  if (!user || user.username !== 'StrawField') {
+    return res.status(403).json({ success: false, error: 'Acesso negado.' });
+  }
+
+  const bans = await getBannedFingerprints();
+  res.json({ success: true, bans });
+});
+
 // ===== HEALTH CHECK =====
 app.get('/api/health', async (req, res) => {
   const providers = [];
@@ -410,4 +612,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 StrawField Backend rodando na porta ${PORT}`);
   const p = [OLLAMA_URL ? 'Ollama' : '', groq ? 'Groq' : '', GEMINI_API_KEY ? 'Gemini' : '', openai ? 'OpenAI' : ''].filter(Boolean);
   console.log(`   Provedores: ${p.join(', ') || 'NENHUM — configure o .env!'}`);
+  console.log(`   Streaming: ${groq ? '✅ Groq' : '❌ Não disponível'}`);
+  console.log(`   Upload: ✅ Ativo`);
+  console.log(`   Admin (Ban): ✅ StrawField`);
 });

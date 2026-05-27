@@ -2,117 +2,105 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus,
   MessageSquare, History, LogOut, LogIn, UserPlus, Ghost,
-  ChevronLeft, ChevronRight, Sparkles, X, Menu, Settings as SettingsIcon, Heart,
-  Volume2, VolumeX
+  ChevronLeft, Sparkles, X, Menu, Settings as SettingsIcon, Heart,
+  Volume2, VolumeX, Paperclip, Shield, Ban, FileText, Image as ImageIcon
 } from 'lucide-react';
 import Agents from './Agents';
 import Settings from './Settings';
 import Credits from './Credits';
 
+// ===== FINGERPRINT DO DISPOSITIVO =====
+function getFingerprint() {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.textBaseline = 'top';
+  ctx.font = '14px Arial';
+  ctx.fillText('StrawField FP v1', 2, 2);
+  const canvasData = canvas.toDataURL();
+
+  const raw = [
+    navigator.userAgent,
+    navigator.language,
+    screen.colorDepth,
+    screen.width + 'x' + screen.height,
+    new Date().getTimezoneOffset(),
+    !!window.sessionStorage,
+    !!window.localStorage,
+    canvasData.slice(-50)
+  ].join('::');
+
+  let hash = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return 'fp_' + Math.abs(hash).toString(16);
+}
+
+const DEVICE_FP = getFingerprint();
+
 // ===== TRADUÇÕES =====
 const TRANSLATIONS = {
   pt: {
-    title: 'StrawField',
-    subtitle: 'Sua IA com personalidade',
-    login: 'Entrar',
-    register: 'Criar Conta',
-    username: 'Username',
-    password: 'Senha',
-    displayName: 'Nome de exibição',
-    guest: 'Usar como Convidado',
-    noAccount: 'Não tem conta?',
-    hasAccount: 'Já tem conta?',
-    createAccount: 'Criar conta',
-    newChat: 'Nova Conversa',
-    history: 'Histórico',
-    noChats: 'Nenhuma conversa ainda',
-    startConversation: 'Comece uma conversa',
-    placeholder: 'Mensagem StrawField...',
+    title: 'StrawField', subtitle: 'Sua IA com personalidade',
+    login: 'Entrar', register: 'Criar Conta', username: 'Username', password: 'Senha',
+    displayName: 'Nome de exibição', guest: 'Usar como Convidado',
+    noAccount: 'Não tem conta?', hasAccount: 'Já tem conta?', createAccount: 'Criar conta',
+    newChat: 'Nova Conversa', history: 'Histórico', noChats: 'Nenhuma conversa ainda',
+    startConversation: 'Comece uma conversa', placeholder: 'Mensagem StrawField...',
     disclaimer: 'StrawField pode errar. Verifique fatos importantes.',
-    agent: 'Agente',
-    settings: 'Configurações',
-    credits: 'Créditos',
-    lightMode: 'Modo Claro',
-    darkMode: 'Modo Escuro',
-    logout: 'Sair',
-    deleteConfirm: 'Deletar esta conversa?',
-    clearConfirm: 'Isso vai apagar TODAS as conversas. Continuar?',
-    connectionError: 'Erro de conexão.',
-    invalidResponse: 'Resposta inválida.',
-    createChatError: 'Não foi possível criar conversa.',
-    createChatError2: 'Erro ao criar conversa.',
-    aiError: 'Erro na IA.',
-    responseError: 'Erro ao obter resposta.',
+    agent: 'Agente', settings: 'Configurações', credits: 'Créditos',
+    lightMode: 'Modo Claro', darkMode: 'Modo Escuro', logout: 'Sair',
+    deleteConfirm: 'Deletar esta conversa?', clearConfirm: 'Isso vai apagar TODAS as conversas. Continuar?',
+    connectionError: 'Erro de conexão.', invalidResponse: 'Resposta inválida.',
+    createChatError: 'Não foi possível criar conversa.', createChatError2: 'Erro ao criar conversa.',
+    aiError: 'Erro na IA.', responseError: 'Erro ao obter resposta.',
+    admin: 'Admin', banDevice: 'Banir Dispositivo', unbanDevice: 'Desbanir',
+    bannedDevices: 'Dispositivos Banidos', reason: 'Motivo', noBans: 'Nenhum dispositivo banido',
+    uploadFile: 'Anexar arquivo', uploadError: 'Erro no upload.',
+    streaming: 'Streaming', fileTooBig: 'Arquivo muito grande (max 10MB)',
   },
   en: {
-    title: 'StrawField',
-    subtitle: 'Your AI with personality',
-    login: 'Login',
-    register: 'Create Account',
-    username: 'Username',
-    password: 'Password',
-    displayName: 'Display Name',
-    guest: 'Use as Guest',
-    noAccount: "Don't have an account?",
-    hasAccount: 'Already have an account?',
-    createAccount: 'Create account',
-    newChat: 'New Chat',
-    history: 'History',
-    noChats: 'No conversations yet',
-    startConversation: 'Start a conversation',
-    placeholder: 'Message StrawField...',
+    title: 'StrawField', subtitle: 'Your AI with personality',
+    login: 'Login', register: 'Create Account', username: 'Username', password: 'Password',
+    displayName: 'Display Name', guest: 'Use as Guest',
+    noAccount: "Don't have an account?", hasAccount: 'Already have an account?', createAccount: 'Create account',
+    newChat: 'New Chat', history: 'History', noChats: 'No conversations yet',
+    startConversation: 'Start a conversation', placeholder: 'Message StrawField...',
     disclaimer: 'StrawField may make mistakes. Verify important facts.',
-    agent: 'Agent',
-    settings: 'Settings',
-    credits: 'Credits',
-    lightMode: 'Light Mode',
-    darkMode: 'Dark Mode',
-    logout: 'Logout',
-    deleteConfirm: 'Delete this conversation?',
-    clearConfirm: 'This will delete ALL conversations. Continue?',
-    connectionError: 'Connection error.',
-    invalidResponse: 'Invalid response.',
-    createChatError: 'Could not create conversation.',
-    createChatError2: 'Error creating conversation.',
-    aiError: 'AI error.',
-    responseError: 'Error getting response.',
+    agent: 'Agent', settings: 'Settings', credits: 'Credits',
+    lightMode: 'Light Mode', darkMode: 'Dark Mode', logout: 'Logout',
+    deleteConfirm: 'Delete this conversation?', clearConfirm: 'This will delete ALL conversations. Continue?',
+    connectionError: 'Connection error.', invalidResponse: 'Invalid response.',
+    createChatError: 'Could not create conversation.', createChatError2: 'Error creating conversation.',
+    aiError: 'AI error.', responseError: 'Error getting response.',
+    admin: 'Admin', banDevice: 'Ban Device', unbanDevice: 'Unban',
+    bannedDevices: 'Banned Devices', reason: 'Reason', noBans: 'No banned devices',
+    uploadFile: 'Attach file', uploadError: 'Upload error.',
+    streaming: 'Streaming', fileTooBig: 'File too large (max 10MB)',
   },
   es: {
-    title: 'StrawField',
-    subtitle: 'Tu IA con personalidad',
-    login: 'Entrar',
-    register: 'Crear Cuenta',
-    username: 'Usuario',
-    password: 'Contraseña',
-    displayName: 'Nombre para mostrar',
-    guest: 'Usar como Invitado',
-    noAccount: '¿No tienes cuenta?',
-    hasAccount: '¿Ya tienes cuenta?',
-    createAccount: 'Crear cuenta',
-    newChat: 'Nueva Conversación',
-    history: 'Historial',
-    noChats: 'Aún no hay conversaciones',
-    startConversation: 'Inicia una conversación',
-    placeholder: 'Mensaje StrawField...',
+    title: 'StrawField', subtitle: 'Tu IA con personalidad',
+    login: 'Entrar', register: 'Crear Cuenta', username: 'Usuario', password: 'Contraseña',
+    displayName: 'Nombre para mostrar', guest: 'Usar como Invitado',
+    noAccount: '¿No tienes cuenta?', hasAccount: '¿Ya tienes cuenta?', createAccount: 'Crear cuenta',
+    newChat: 'Nueva Conversación', history: 'Historial', noChats: 'Aún no hay conversaciones',
+    startConversation: 'Inicia una conversación', placeholder: 'Mensaje StrawField...',
     disclaimer: 'StrawField puede cometer errores. Verifica hechos importantes.',
-    agent: 'Agente',
-    settings: 'Configuración',
-    credits: 'Créditos',
-    lightMode: 'Modo Claro',
-    darkMode: 'Modo Oscuro',
-    logout: 'Salir',
-    deleteConfirm: '¿Eliminar esta conversación?',
-    clearConfirm: 'Esto eliminará TODAS las conversaciones. ¿Continuar?',
-    connectionError: 'Error de conexión.',
-    invalidResponse: 'Respuesta inválida.',
-    createChatError: 'No se pudo crear la conversación.',
-    createChatError2: 'Error al crear la conversación.',
-    aiError: 'Error de IA.',
-    responseError: 'Error al obtener respuesta.',
+    agent: 'Agente', settings: 'Configuración', credits: 'Créditos',
+    lightMode: 'Modo Claro', darkMode: 'Modo Oscuro', logout: 'Salir',
+    deleteConfirm: '¿Eliminar esta conversación?', clearConfirm: 'Esto eliminará TODAS las conversaciones. ¿Continuar?',
+    connectionError: 'Error de conexión.', invalidResponse: 'Respuesta inválida.',
+    createChatError: 'No se pudo crear la conversación.', createChatError2: 'Error al crear la conversación.',
+    aiError: 'Error de IA.', responseError: 'Error al obtener respuesta.',
+    admin: 'Admin', banDevice: 'Banear Dispositivo', unbanDevice: 'Desbanear',
+    bannedDevices: 'Dispositivos Baneados', reason: 'Razón', noBans: 'Ningún dispositivo baneado',
+    uploadFile: 'Adjuntar archivo', uploadError: 'Error de subida.',
+    streaming: 'Streaming', fileTooBig: 'Archivo muy grande (max 10MB)',
   }
 };
 
-// ===== CORES DOS TEMAS =====
 const THEME_COLORS = {
   indigo: { primary: 'indigo', gradient: 'from-indigo-500 to-violet-600', text: 'text-indigo-600', bg: 'bg-indigo-600', ring: 'ring-indigo-500' },
   rose: { primary: 'rose', gradient: 'from-rose-500 to-pink-600', text: 'text-rose-600', bg: 'bg-rose-600', ring: 'ring-rose-500' },
@@ -121,15 +109,9 @@ const THEME_COLORS = {
   cyan: { primary: 'cyan', gradient: 'from-cyan-500 to-blue-600', text: 'text-cyan-600', bg: 'bg-cyan-600', ring: 'ring-cyan-500' },
 };
 
-// ✅ API URL do Render
 const API_URL = 'https://strawfieldapi.onrender.com';
 
-/* ============================================================
-   STRAWFIELD v2.1 — Com Agentes, Configurações e Créditos
-   ============================================================ */
-
 export default function App() {
-  // ===== ESTADOS GLOBAIS =====
   const [token, setToken] = useState(localStorage.getItem('sf_token') || null);
   const [user, setUser] = useState(null);
   const [view, setView] = useState('chat');
@@ -141,21 +123,19 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
 
-  // ===== ESTADOS DE CHAT =====
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [streamingText, setStreamingText] = useState('');
 
-  // ===== ESTADOS NOVOS: AGENTES, CONFIGURAÇÕES, CRÉDITOS =====
   const [currentView, setCurrentView] = useState('chat');
   const [currentAgent, setCurrentAgent] = useState('strawfield');
   const [currentModel, setCurrentModel] = useState('groq');
   const [showCredits, setShowCredits] = useState(false);
 
-  // ===== ESTADOS FASE 1: TEMA, IDIOMA, NOTIFICAÇÕES, TTS =====
   const [currentTheme, setCurrentTheme] = useState(localStorage.getItem('sf_theme_color') || 'indigo');
   const [currentLang, setCurrentLang] = useState(localStorage.getItem('sf_lang') || 'pt');
   const [notifications, setNotifications] = useState(() => {
@@ -167,12 +147,20 @@ export default function App() {
     return saved ? saved === 'true' : false;
   });
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [useStreaming, setUseStreaming] = useState(() => {
+    const saved = localStorage.getItem('sf_streaming');
+    return saved ? saved === 'true' : true;
+  });
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [bans, setBans] = useState({});
+  const [uploadedFile, setUploadedFile] = useState(null);
 
   const chatEndRef = useRef(null);
+  const fileInputRef = useRef(null);
   const t = TRANSLATIONS[currentLang] || TRANSLATIONS.pt;
   const theme = THEME_COLORS[currentTheme] || THEME_COLORS.indigo;
 
-  // ===== DETECTA MOBILE =====
   useEffect(() => {
     const check = () => {
       const mobile = window.innerWidth < 768;
@@ -184,43 +172,61 @@ export default function App() {
     return () => window.removeEventListener('resize', check);
   }, []);
 
-  // ===== TEMA =====
   useEffect(() => {
     const root = document.documentElement;
     if (darkMode) { root.classList.add('dark'); localStorage.setItem('sf_theme', 'dark'); }
     else { root.classList.remove('dark'); localStorage.setItem('sf_theme', 'light'); }
   }, [darkMode]);
 
-  // ===== SALVAR PREFERÊNCIAS =====
   useEffect(() => { localStorage.setItem('sf_theme_color', currentTheme); }, [currentTheme]);
   useEffect(() => { localStorage.setItem('sf_lang', currentLang); }, [currentLang]);
   useEffect(() => { localStorage.setItem('sf_notifications', notifications.toString()); }, [notifications]);
   useEffect(() => { localStorage.setItem('sf_tts', ttsEnabled.toString()); }, [ttsEnabled]);
+  useEffect(() => { localStorage.setItem('sf_streaming', useStreaming.toString()); }, [useStreaming]);
 
-  // ===== PERMISSÃO DE NOTIFICAÇÕES =====
   useEffect(() => {
     if (notifications && 'Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
   }, [notifications]);
 
-  // ===== VERIFICA TOKEN =====
   useEffect(() => {
-    if (!token) { setUser(null); return; }
-    fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!token) { setUser(null); setIsAdmin(false); return; }
+    fetch(`${API_URL}/api/auth/me`, { 
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        'X-Device-Fingerprint': DEVICE_FP
+      } 
+    })
       .then(r => r.json())
       .then(data => {
-        if (data.success) setUser(data.user);
-        else { localStorage.removeItem('sf_token'); setToken(null); setUser(null); }
+        if (data.success) {
+          setUser(data.user);
+          setIsAdmin(data.user.isAdmin);
+        } else {
+          localStorage.removeItem('sf_token');
+          setToken(null);
+          setUser(null);
+          setIsAdmin(false);
+        }
       })
-      .catch(() => { localStorage.removeItem('sf_token'); setToken(null); setUser(null); });
+      .catch(() => {
+        localStorage.removeItem('sf_token');
+        setToken(null);
+        setUser(null);
+        setIsAdmin(false);
+      });
   }, [token]);
 
-  // ===== CARREGA CHATS =====
   const loadChats = useCallback(async () => {
     if (!token) return;
     try {
-      const r = await fetch(`${API_URL}/api/chats`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await fetch(`${API_URL}/api/chats`, { 
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        } 
+      });
       const data = await r.json();
       if (data.success) {
         setChats(data.chats);
@@ -233,10 +239,14 @@ export default function App() {
 
   useEffect(() => { loadChats(); }, [loadChats]);
 
-  // ===== CARREGA MENSAGENS DO CHAT ATIVO =====
   useEffect(() => {
     if (!activeChatId || !token) { setMessages([]); return; }
-    fetch(`${API_URL}/api/chats/${activeChatId}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_URL}/api/chats/${activeChatId}`, { 
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        'X-Device-Fingerprint': DEVICE_FP
+      } 
+    })
       .then(r => r.json())
       .then(data => {
         if (data.success) setMessages(data.chat.messages || []);
@@ -245,12 +255,10 @@ export default function App() {
       .catch(() => setMessages([]));
   }, [activeChatId, token]);
 
-  // ===== SCROLL AUTOMÁTICO =====
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading, error]);
+  }, [messages, loading, error, streamingText]);
 
-  // ===== TTS (TEXT TO SPEECH) =====
   const speak = useCallback((text) => {
     if (!ttsEnabled || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -269,20 +277,22 @@ export default function App() {
     setIsSpeaking(false);
   };
 
-  // ===== NOTIFICAÇÃO =====
   const sendNotification = useCallback((title, body) => {
     if (notifications && 'Notification' in window && Notification.permission === 'granted') {
       new Notification(title, { body, icon: '/favicon.ico' });
     }
   }, [notifications]);
 
-  // ===== CRIAR NOVO CHAT =====
   const createChat = async () => {
     if (!token) return;
     try {
       const r = await fetch(`${API_URL}/api/chats`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 
+          'Content-Type': 'application/json', 
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        },
         body: JSON.stringify({ title: t.newChat }),
       });
       const data = await r.json();
@@ -295,7 +305,6 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-  // ===== DELETAR CHAT =====
   const deleteChat = async (chatId, e) => {
     e.stopPropagation();
     if (!token) return;
@@ -303,7 +312,10 @@ export default function App() {
     try {
       await fetch(`${API_URL}/api/chats/${chatId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        },
       });
       setChats(prev => prev.filter(c => c.id !== chatId));
       if (activeChatId === chatId) {
@@ -314,7 +326,6 @@ export default function App() {
     } catch (err) { console.error(err); }
   };
 
-  // ===== LIMPAR HISTÓRICO =====
   const handleClearHistory = async () => {
     if (!token) return;
     if (!confirm(t.clearConfirm)) return;
@@ -322,7 +333,10 @@ export default function App() {
       for (const chat of chats) {
         await fetch(`${API_URL}/api/chats/${chat.id}`, {
           method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'X-Device-Fingerprint': DEVICE_FP
+          },
         });
       }
       setChats([]);
@@ -331,7 +345,6 @@ export default function App() {
     } catch (err) { console.error(err); }
   };
 
-  // ===== EXPORTAR CHAT =====
   const handleExportChat = () => {
     if (!messages.length) return;
     const chat = chats.find(c => c.id === activeChatId);
@@ -353,7 +366,135 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // ===== ENVIAR MENSAGEM =====
+  // ===== UPLOAD DE ARQUIVO =====
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert(t.fileTooBig);
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const r = await fetch(`${API_URL}/api/upload`, {
+        method: 'POST',
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        },
+        body: formData,
+      });
+      const data = await r.json();
+      if (data.success) {
+        setUploadedFile(data.file);
+        // Adiciona mensagem com o arquivo
+        const isImage = data.file.type.startsWith('image/');
+        const fileMsg = isImage 
+          ? `[Imagem: ${data.file.name}]\n${data.file.url}`
+          : `[Arquivo: ${data.file.name}]`;
+        setInput(prev => prev ? prev + '\n' + fileMsg : fileMsg);
+      } else {
+        alert(t.uploadError);
+      }
+    } catch (err) {
+      alert(t.uploadError);
+    }
+    e.target.value = '';
+  };
+
+  // ===== STREAMING =====
+  const handleSendStream = async (currentChatId, userMessage) => {
+    setStreamingText('');
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/chats/${currentChatId}/message/stream`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json', 
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        },
+        body: JSON.stringify({ message: userMessage, agent: currentAgent }),
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.chunk) {
+                fullText += data.chunk;
+                setStreamingText(fullText);
+              }
+              if (data.done) {
+                setMessages(prev => [...prev, { role: 'assistant', content: data.data }]);
+                setStreamingText('');
+                speak(data.data);
+                sendNotification('StrawField respondeu!', data.data.slice(0, 100) + '...');
+              }
+              if (data.error) {
+                setError(data.error);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
+      setChats(prev => prev.map(c => c.id === currentChatId ? { ...c, title: c.title === t.newChat ? userMessage.slice(0, 40) + (userMessage.length > 40 ? '...' : '') : c.title } : c));
+      loadChats();
+    } catch (err) {
+      console.error(err);
+      setError(err.message || t.responseError);
+    } finally {
+      setLoading(false);
+      setStreamingText('');
+    }
+  };
+
+  // ===== MENSAGEM NORMAL =====
+  const handleSendNormal = async (currentChatId, userMessage) => {
+    try {
+      const r = await fetch(`${API_URL}/api/chats/${currentChatId}/message`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json', 
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        },
+        body: JSON.stringify({ message: userMessage, agent: currentAgent }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) throw new Error(data.error || t.aiError);
+      if (!data.data || typeof data.data !== 'string') throw new Error(t.invalidResponse);
+
+      setMessages(prev => [...prev, { role: 'assistant', content: data.data }]);
+      setChats(prev => prev.map(c => c.id === currentChatId ? { ...c, title: c.title === t.newChat ? userMessage.slice(0, 40) + (userMessage.length > 40 ? '...' : '') : c.title } : c));
+      loadChats();
+      speak(data.data);
+      sendNotification('StrawField respondeu!', data.data.slice(0, 100) + '...');
+    } catch (err) {
+      console.error(err);
+      setError(err.message || t.responseError);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ===== ENVIAR MENSAGEM (ESCOLHE STREAM OU NORMAL) =====
   const handleSend = async () => {
     if (!input.trim() || loading || !token) return;
 
@@ -362,7 +503,11 @@ export default function App() {
       try {
         const r = await fetch(`${API_URL}/api/chats`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 
+            'Content-Type': 'application/json', 
+            Authorization: `Bearer ${token}`,
+            'X-Device-Fingerprint': DEVICE_FP
+          },
           body: JSON.stringify({ title: t.newChat }),
         });
         const data = await r.json();
@@ -384,38 +529,71 @@ export default function App() {
     const userMessage = input.trim();
     setInput('');
     setError(null);
+    setUploadedFile(null);
 
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
-    try {
-      const r = await fetch(`${API_URL}/api/chats/${currentChatId}/message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ message: userMessage, agent: currentAgent }),
-      });
-      const data = await r.json();
-      if (!r.ok || !data.success) throw new Error(data.error || t.aiError);
-      if (!data.data || typeof data.data !== 'string') throw new Error(t.invalidResponse);
-
-      setMessages(prev => [...prev, { role: 'assistant', content: data.data }]);
-      setChats(prev => prev.map(c => c.id === currentChatId ? { ...c, title: c.title === t.newChat ? userMessage.slice(0, 40) + (userMessage.length > 40 ? '...' : '') : c.title } : c));
-      loadChats();
-
-      // TTS
-      speak(data.data);
-      // Notificação
-      sendNotification('StrawField respondeu!', data.data.slice(0, 100) + '...');
-    } catch (err) {
-      console.error(err);
-      setError(err.message || t.responseError);
-    } finally {
-      setLoading(false);
+    if (useStreaming) {
+      await handleSendStream(currentChatId, userMessage);
+    } else {
+      await handleSendNormal(currentChatId, userMessage);
     }
   };
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  // ===== ADMIN: CARREGAR BANS =====
+  const loadBans = async () => {
+    if (!isAdmin) return;
+    try {
+      const r = await fetch(`${API_URL}/api/admin/bans`, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        }
+      });
+      const data = await r.json();
+      if (data.success) setBans(data.bans);
+    } catch (err) { console.error(err); }
+  };
+
+  // ===== ADMIN: BANIR =====
+  const handleBan = async (fingerprint, reason = '') => {
+    try {
+      const r = await fetch(`${API_URL}/api/admin/ban`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        },
+        body: JSON.stringify({ fingerprint, reason }),
+      });
+      const data = await r.json();
+      if (data.success) loadBans();
+      alert(data.message || data.error);
+    } catch (err) { alert('Erro ao banir.'); }
+  };
+
+  // ===== ADMIN: DESBANIR =====
+  const handleUnban = async (fingerprint) => {
+    try {
+      const r = await fetch(`${API_URL}/api/admin/unban`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Device-Fingerprint': DEVICE_FP
+        },
+        body: JSON.stringify({ fingerprint }),
+      });
+      const data = await r.json();
+      if (data.success) loadBans();
+      alert(data.message || data.error);
+    } catch (err) { alert('Erro ao desbanir.'); }
   };
 
   // ===== AUTH HANDLERS =====
@@ -485,6 +663,7 @@ export default function App() {
     setMessages([]);
     setView('login');
     setCurrentView('chat');
+    setIsAdmin(false);
     stopSpeaking();
   };
 
@@ -560,7 +739,91 @@ export default function App() {
     );
   }
 
-  // ===== RENDER: VIEWS (AGENTES / CONFIGURAÇÕES / CHAT) =====
+  // ===== RENDER: ADMIN PANEL =====
+  if (showAdmin && isAdmin) {
+    return (
+      <div className={`min-h-screen ${darkMode ? 'bg-slate-950 text-white' : 'bg-gray-50 text-gray-900'} p-6`}>
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center gap-3 mb-6">
+            <button onClick={() => { setShowAdmin(false); setCurrentView('chat'); }} className={`p-2 ${darkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-200'} rounded-xl transition-all`}>
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <h1 className="text-3xl font-bold flex items-center gap-3">
+              <Shield className="w-8 h-8 text-red-500" />
+              Painel Admin
+            </h1>
+          </div>
+
+          <div className={`p-6 rounded-xl mb-6 ${darkMode ? 'bg-gray-800' : 'bg-white border border-gray-200'}`}>
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Ban className="w-5 h-5 text-red-400" />
+              {t.bannedDevices}
+            </h2>
+
+            <div className="mb-4 flex gap-2">
+              <input 
+                id="ban-fp" 
+                placeholder="Fingerprint do dispositivo" 
+                className={`flex-1 px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100'} outline-none`}
+              />
+              <input 
+                id="ban-reason" 
+                placeholder={t.reason} 
+                className={`flex-1 px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100'} outline-none`}
+              />
+              <button 
+                onClick={() => {
+                  const fp = document.getElementById('ban-fp').value;
+                  const reason = document.getElementById('ban-reason').value;
+                  if (fp) handleBan(fp, reason);
+                }}
+                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+              >
+                {t.banDevice}
+              </button>
+            </div>
+
+            <button onClick={loadBans} className={`mb-4 px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'} transition-colors`}>
+              Atualizar lista
+            </button>
+
+            {Object.keys(bans).length === 0 ? (
+              <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{t.noBans}</p>
+            ) : (
+              <div className="space-y-2">
+                {Object.entries(bans).map(([fp, info]) => (
+                  <div key={fp} className={`flex items-center justify-between p-3 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                    <div>
+                      <p className="font-mono text-sm">{fp}</p>
+                      <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                        {t.reason}: {info.reason || 'N/A'} | {new Date(info.bannedAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => handleUnban(fp)}
+                      className="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm"
+                    >
+                      {t.unbanDevice}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className={`p-6 rounded-xl ${darkMode ? 'bg-gray-800' : 'bg-white border border-gray-200'}`}>
+            <h2 className="text-xl font-bold mb-4">Seu Fingerprint</h2>
+            <p className="font-mono text-sm break-all p-3 rounded-lg bg-black/10">{DEVICE_FP}</p>
+            <p className={`text-xs mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              Use este fingerprint para banir seu próprio dispositivo (teste) ou peça o fingerprint do usuário problemático.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ===== RENDER: VIEWS =====
   if (currentView === 'agents') {
     return (
       <div className={`h-screen ${darkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
@@ -570,11 +833,7 @@ export default function App() {
           </button>
           <h1 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-slate-800'}`}>Voltar ao Chat</h1>
         </div>
-        <Agents
-          currentAgent={currentAgent}
-          onSelect={(id) => { setCurrentAgent(id); setCurrentView('chat'); }}
-          darkMode={darkMode}
-        />
+        <Agents currentAgent={currentAgent} onSelect={(id) => { setCurrentAgent(id); setCurrentView('chat'); }} darkMode={darkMode} />
       </div>
     );
   }
@@ -583,21 +842,15 @@ export default function App() {
     return (
       <div className={`h-screen ${darkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
         <Settings
-          darkMode={darkMode}
-          onToggleTheme={() => setDarkMode(!darkMode)}
-          currentModel={currentModel}
-          onChangeModel={setCurrentModel}
-          onClearHistory={handleClearHistory}
-          onExportChat={handleExportChat}
+          darkMode={darkMode} onToggleTheme={() => setDarkMode(!darkMode)}
+          currentModel={currentModel} onChangeModel={setCurrentModel}
+          onClearHistory={handleClearHistory} onExportChat={handleExportChat}
           onBack={() => setCurrentView('chat')}
-          currentAgent={currentAgent}
-          onGoToAgents={() => setCurrentView('agents')}
-          currentTheme={currentTheme}
-          onChangeTheme={setCurrentTheme}
-          notifications={notifications}
-          onToggleNotifications={() => setNotifications(!notifications)}
-          currentLang={currentLang}
-          onChangeLang={setCurrentLang}
+          currentAgent={currentAgent} onGoToAgents={() => setCurrentView('agents')}
+          currentTheme={currentTheme} onChangeTheme={setCurrentTheme}
+          notifications={notifications} onToggleNotifications={() => setNotifications(!notifications)}
+          currentLang={currentLang} onChangeLang={setCurrentLang}
+          useStreaming={useStreaming} onToggleStreaming={() => setUseStreaming(!useStreaming)}
         />
       </div>
     );
@@ -606,9 +859,8 @@ export default function App() {
   // ===== RENDER: CHAT =====
   return (
     <div className={`flex h-screen ${darkMode ? 'bg-slate-950' : 'bg-slate-50'} transition-colors duration-300 overflow-hidden`}>
-      {/* ===== SIDEBAR ===== */}
+      {/* SIDEBAR */}
       <aside className={`${sidebarOpen ? 'w-72' : 'w-0'} ${isMobile ? 'absolute z-50 h-full' : 'relative'} ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border-r flex flex-col transition-all duration-300 overflow-hidden`}>
-        {/* Sidebar Header */}
         <div className={`p-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'} flex items-center gap-3`}>
           <div className={`p-2 bg-gradient-to-br ${theme.gradient} rounded-xl shadow-sm`}>
             <Sparkles className="w-5 h-5 text-white" />
@@ -624,14 +876,12 @@ export default function App() {
           )}
         </div>
 
-        {/* Novo Chat */}
         <div className="p-3">
           <button onClick={createChat} className={`w-full py-2.5 px-4 bg-gradient-to-br ${theme.gradient} hover:opacity-90 text-white rounded-xl font-medium transition-all shadow-sm flex items-center justify-center gap-2 text-sm`}>
             <Plus className="w-4 h-4" /> {t.newChat}
           </button>
         </div>
 
-        {/* Lista de Chats */}
         <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1">
           <p className={`text-xs font-semibold ${darkMode ? 'text-slate-500' : 'text-slate-400'} uppercase tracking-wider px-2 mb-2`}>{t.history}</p>
           {chats.length === 0 && (
@@ -659,7 +909,6 @@ export default function App() {
               <button
                 onClick={(e) => deleteChat(chat.id, e)}
                 className={`opacity-0 group-hover:opacity-100 p-1.5 ${darkMode ? 'text-slate-400 hover:text-red-400 hover:bg-red-900/20' : 'text-slate-400 hover:text-red-500 hover:bg-red-50'} rounded-lg transition-all`}
-                title="Deletar"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -667,8 +916,16 @@ export default function App() {
           ))}
         </div>
 
-        {/* Sidebar Footer */}
         <div className={`p-3 border-t ${darkMode ? 'border-slate-800' : 'border-slate-200'} space-y-2`}>
+          {isAdmin && (
+            <button
+              onClick={() => { setShowAdmin(true); loadBans(); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm text-red-400 hover:bg-red-500/10 rounded-xl transition-all`}
+            >
+              <Shield className="w-4 h-4" />
+              {t.admin}
+            </button>
+          )}
           <button
             onClick={() => setCurrentView('agents')}
             className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm ${darkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'} rounded-xl transition-all`}
@@ -706,9 +963,8 @@ export default function App() {
         </div>
       </aside>
 
-      {/* ===== ÁREA PRINCIPAL ===== */}
+      {/* MAIN */}
       <main className={`flex-1 flex flex-col min-w-0 ${darkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
-        {/* Header */}
         <header className={`flex items-center gap-3 px-4 py-3 ${darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200'} backdrop-blur-md border-b z-10`}>
           {!sidebarOpen && (
             <button onClick={() => setSidebarOpen(true)} className={`p-2 ${darkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'} rounded-xl transition-all`}>
@@ -721,11 +977,14 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {/* TTS Toggle */}
+            {useStreaming && (
+              <span className={`text-xs px-2 py-1 rounded-full ${darkMode ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-600'}`}>
+                ⚡
+              </span>
+            )}
             <button
-              onClick={() => { ttsEnabled ? stopSpeaking() : setTtsEnabled(!ttsEnabled); }}
+              onClick={() => ttsEnabled ? stopSpeaking() : setTtsEnabled(!ttsEnabled)}
               className={`p-2 rounded-xl transition-all ${ttsEnabled ? `${theme.text} ${darkMode ? 'bg-slate-800' : 'bg-slate-100'}` : `${darkMode ? 'text-slate-500 hover:bg-slate-800' : 'text-slate-400 hover:bg-slate-100'}`}`}
-              title={ttsEnabled ? 'Desativar voz' : 'Ativar voz'}
             >
               {isSpeaking ? <Volume2 className="w-4 h-4 animate-pulse" /> : ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
@@ -738,9 +997,8 @@ export default function App() {
           </div>
         </header>
 
-        {/* Mensagens */}
         <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          {messages.length === 0 && (
+          {messages.length === 0 && !streamingText && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${theme.gradient} opacity-20 flex items-center justify-center mb-4`}>
                 <Bot className={`w-8 h-8 ${theme.text}`} />
@@ -748,6 +1006,7 @@ export default function App() {
               <h3 className={`text-lg font-semibold ${darkMode ? 'text-slate-200' : 'text-slate-700'} mb-1`}>{t.startConversation}</h3>
               <p className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-500'} max-w-sm`}>
                 {t.agent}: <span className="font-bold text-pink-400 capitalize">{currentAgent}</span>
+                {useStreaming && <span className="ml-2">⚡ {t.streaming}</span>}
               </p>
             </div>
           )}
@@ -755,19 +1014,11 @@ export default function App() {
           {messages.map((msg, idx) => (
             <div key={idx} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}>
               <div className={`flex max-w-[90%] sm:max-w-[75%] md:max-w-[65%] gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                {/* Avatar */}
                 <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                  msg.role === 'user'
-                    ? `bg-gradient-to-br ${theme.gradient}`
-                    : `${darkMode ? 'bg-slate-700' : 'bg-slate-200'}`
+                  msg.role === 'user' ? `bg-gradient-to-br ${theme.gradient}` : `${darkMode ? 'bg-slate-700' : 'bg-slate-200'}`
                 }`}>
-                  {msg.role === 'user'
-                    ? <User className="w-4 h-4 text-white" />
-                    : <Bot className={`w-4 h-4 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`} />
-                  }
+                  {msg.role === 'user' ? <User className="w-4 h-4 text-white" /> : <Bot className={`w-4 h-4 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`} />}
                 </div>
-
-                {/* Bolha */}
                 <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm whitespace-pre-wrap ${
                   msg.role === 'user'
                     ? `bg-gradient-to-br ${theme.gradient} text-white rounded-br-md`
@@ -775,11 +1026,7 @@ export default function App() {
                 }`}>
                   {msg.content}
                   {msg.role === 'assistant' && (
-                    <button
-                      onClick={() => speak(msg.content)}
-                      className={`ml-2 p-1 rounded-lg ${darkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'} transition-colors inline-flex`}
-                      title="Ouvir resposta"
-                    >
+                    <button onClick={() => speak(msg.content)} className={`ml-2 p-1 rounded-lg ${darkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'} transition-colors inline-flex`}>
                       <Volume2 className="w-3 h-3" />
                     </button>
                   )}
@@ -788,8 +1035,22 @@ export default function App() {
             </div>
           ))}
 
-          {/* Digitando */}
-          {loading && (
+          {/* STREAMING */}
+          {streamingText && (
+            <div className="flex justify-start w-full animate-fade-in-up">
+              <div className="flex max-w-[65%] gap-3 flex-row">
+                <div className={`flex-shrink-0 w-8 h-8 rounded-full ${darkMode ? 'bg-slate-700' : 'bg-slate-200'} flex items-center justify-center`}>
+                  <Bot className={`w-4 h-4 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`} />
+                </div>
+                <div className={`px-4 py-3 ${darkMode ? 'bg-slate-800 text-slate-100 border-slate-700' : 'bg-white text-slate-800 border-slate-200'} border rounded-2xl rounded-bl-md shadow-sm`}>
+                  <span>{streamingText}</span>
+                  <span className="inline-block w-2 h-4 bg-blue-400 animate-pulse ml-1" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {loading && !streamingText && (
             <div className="flex justify-start w-full animate-fade-in-up">
               <div className="flex max-w-[65%] gap-3 flex-row">
                 <div className={`flex-shrink-0 w-8 h-8 rounded-full ${darkMode ? 'bg-slate-700' : 'bg-slate-200'} flex items-center justify-center`}>
@@ -806,7 +1067,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Erro */}
           {error && (
             <div className="flex justify-center w-full animate-fade-in-up">
               <div className={`flex items-center gap-2 px-4 py-3 ${darkMode ? 'bg-red-900/20 border-red-800 text-red-300' : 'bg-red-50 border-red-200 text-red-700'} border rounded-xl text-sm shadow-sm`}>
@@ -819,9 +1079,23 @@ export default function App() {
           <div ref={chatEndRef} />
         </div>
 
-        {/* Input */}
+        {/* INPUT */}
         <footer className={`p-4 ${darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200'} backdrop-blur-md border-t`}>
           <div className="flex items-end gap-3 max-w-4xl mx-auto">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              className="hidden"
+              accept="image/*,.pdf,.txt,.js,.jsx,.ts,.tsx,.py,.html,.css,.json,.md"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className={`p-3 ${darkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-400 hover:bg-slate-100'} rounded-xl transition-all`}
+              title={t.uploadFile}
+            >
+              <Paperclip className="w-5 h-5" />
+            </button>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -838,18 +1112,20 @@ export default function App() {
               <Send className="w-5 h-5" />
             </button>
           </div>
+          {uploadedFile && (
+            <div className={`max-w-4xl mx-auto mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs ${darkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>
+              {uploadedFile.type.startsWith('image/') ? <ImageIcon className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
+              <span>{uploadedFile.name}</span>
+              <button onClick={() => setUploadedFile(null)} className="ml-auto text-red-400 hover:text-red-500">×</button>
+            </div>
+          )}
           <p className={`text-center text-xs ${darkMode ? 'text-slate-500' : 'text-slate-400'} mt-2`}>
             {t.disclaimer}
           </p>
         </footer>
       </main>
 
-      {/* Modal de Créditos */}
-      <Credits
-        isOpen={showCredits}
-        onClose={() => setShowCredits(false)}
-        darkMode={darkMode}
-      />
+      <Credits isOpen={showCredits} onClose={() => setShowCredits(false)} darkMode={darkMode} />
     </div>
   );
 }
