@@ -1,15 +1,36 @@
 import React from 'react';
-import { Moon, Sun, Trash2, Globe, Cpu, ArrowLeft } from 'lucide-react';
+import { Moon, Sun, Trash2, Globe, Cpu, ArrowLeft, Download, Bell, BellOff, Palette } from 'lucide-react';
+
+const THEMES = [
+  { id: 'indigo', name: 'Índigo', color: 'bg-indigo-500', text: 'text-indigo-400', border: 'border-indigo-500/30' },
+  { id: 'rose', name: 'Rosa', color: 'bg-rose-500', text: 'text-rose-400', border: 'border-rose-500/30' },
+  { id: 'emerald', name: 'Esmeralda', color: 'bg-emerald-500', text: 'text-emerald-400', border: 'border-emerald-500/30' },
+  { id: 'amber', name: 'Âmbar', color: 'bg-amber-500', text: 'text-amber-400', border: 'border-amber-500/30' },
+  { id: 'cyan', name: 'Ciano', color: 'bg-cyan-500', text: 'text-cyan-400', border: 'border-cyan-500/30' },
+];
+
+const LANGUAGES = [
+  { id: 'pt', name: 'Português', flag: '🇧🇷' },
+  { id: 'en', name: 'English', flag: '🇺🇸' },
+  { id: 'es', name: 'Español', flag: '🇪🇸' },
+];
 
 export default function Settings({ 
   darkMode, 
   onToggleTheme, 
   currentModel, 
   onChangeModel, 
-  onClearHistory, 
+  onClearHistory,
+  onExportChat,
   onBack,
   currentAgent,
-  onGoToAgents
+  onGoToAgents,
+  currentTheme,
+  onChangeTheme,
+  notifications,
+  onToggleNotifications,
+  currentLang,
+  onChangeLang,
 }) {
   const models = [
     { id: 'groq', name: 'Groq (Llama 3.1)', desc: 'Rápido e eficiente' },
@@ -38,9 +59,9 @@ export default function Settings({
 
         {/* TEMA */}
         <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-gray-800' : 'bg-white border border-gray-200'}`}>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              {darkMode ? <Moon className="w-5 h-5 text-purple-400" /> : <Sun className="w-5 h-5 text-yellow-500" />}
+              <Palette className="w-5 h-5 text-purple-400" />
               <div>
                 <h3 className="font-semibold">Tema</h3>
                 <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
@@ -61,12 +82,59 @@ export default function Settings({
               />
             </button>
           </div>
+          
+          {/* Cores customizadas */}
+          <div className="grid grid-cols-5 gap-2 mt-3">
+            {THEMES.map((theme) => (
+              <button
+                key={theme.id}
+                onClick={() => onChangeTheme(theme.id)}
+                className={`flex flex-col items-center gap-1 p-2 rounded-lg border-2 transition-all ${
+                  currentTheme === theme.id ? theme.border : 'border-transparent'
+                } ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100'}`}
+              >
+                <div className={`w-6 h-6 rounded-full ${theme.color}`} />
+                <span className="text-xs">{theme.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* IDIOMA */}
+        <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-gray-800' : 'bg-white border border-gray-200'}`}>
+          <div className="flex items-center gap-3 mb-4">
+            <Globe className="w-5 h-5 text-green-400" />
+            <div>
+              <h3 className="font-semibold">Idioma</h3>
+              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                Interface do aplicativo
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {LANGUAGES.map((lang) => (
+              <button
+                key={lang.id}
+                onClick={() => onChangeLang(lang.id)}
+                className={`flex items-center gap-2 p-3 rounded-lg border transition-all ${
+                  currentLang === lang.id
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : darkMode
+                    ? 'border-gray-700 hover:border-gray-600'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <span className="text-lg">{lang.flag}</span>
+                <span className="text-sm font-medium">{lang.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* MODELO DE IA */}
         <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-gray-800' : 'bg-white border border-gray-200'}`}>
           <div className="flex items-center gap-3 mb-4">
-            <Globe className="w-5 h-5 text-blue-400" />
+            <Cpu className="w-5 h-5 text-blue-400" />
             <div>
               <h3 className="font-semibold">Modelo de IA</h3>
               <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
@@ -109,6 +177,54 @@ export default function Settings({
           >
             Trocar Agente
           </button>
+        </div>
+
+        {/* NOTIFICAÇÕES */}
+        <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-gray-800' : 'bg-white border border-gray-200'}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {notifications ? <Bell className="w-5 h-5 text-yellow-400" /> : <BellOff className="w-5 h-5 text-gray-400" />}
+              <div>
+                <h3 className="font-semibold">Notificações</h3>
+                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  {notifications ? 'Ativadas' : 'Desativadas'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onToggleNotifications}
+              className={`relative w-14 h-8 rounded-full transition-colors ${
+                notifications ? 'bg-yellow-500' : 'bg-gray-300'
+              }`}
+            >
+              <div
+                className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-transform ${
+                  notifications ? 'translate-x-7' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        {/* EXPORTAR CHAT */}
+        <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-gray-800' : 'bg-white border border-gray-200'}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Download className="w-5 h-5 text-green-400" />
+              <div>
+                <h3 className="font-semibold">Exportar Conversa</h3>
+                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  Baixar chat atual como arquivo TXT
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onExportChat}
+              className="px-4 py-2 rounded-lg bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 transition-colors"
+            >
+              Exportar
+            </button>
+          </div>
         </div>
 
         {/* LIMPAR HISTÓRICO */}
