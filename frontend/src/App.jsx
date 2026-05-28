@@ -421,23 +421,60 @@ useEffect(() => {
     } catch { setError(t.errorConnection); }
   };
 
-  const createChat = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/chats`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ title: 'Nova Conversa' }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setChats(prev => [data.chat, ...prev]);
-        setActiveChatId(data.chat.id);
-        setMessages([]);
-        setCurrentAgent(prev => prev || 'strawfield');
-        return data.chat.id;
+  // Detecta qual agente usar baseado na mensagem
+function detectAgent(message) {
+  const lower = message.toLowerCase();
+  
+  if (lower.includes('código') || lower.includes('code') || lower.includes('programar') || 
+      lower.includes('javascript') || lower.includes('python') || lower.includes('html') ||
+      lower.includes('css') || lower.includes('bug') || lower.includes('erro no código') ||
+      lower.includes('function') || lower.includes('const') || lower.includes('let')) {
+    return 'coder';
+  }
+  
+  if (lower.includes('explicar') || lower.includes('como funciona') || lower.includes('o que é') ||
+      lower.includes('definição') || lower.includes('conceito') || lower.includes('aula') ||
+      lower.includes('estudar') || lower.includes('aprender') || lower.includes('ensina')) {
+    return 'teacher';
+  }
+  
+  if (lower.includes('criar') || lower.includes('história') || lower.includes('roteiro') ||
+      lower.includes('poema') || lower.includes('música') || lower.includes('ideia') ||
+      lower.includes('inventar') || lower.includes('imagina') || lower.includes('criativo')) {
+    return 'creative';
+  }
+  
+  if (lower.includes('ciência') || lower.includes('física') || lower.includes('química') ||
+      lower.includes('biologia') || lower.includes('matemática') || lower.includes('cálculo') ||
+      lower.includes('teorema') || lower.includes('pesquisa') || lower.includes('estudo científico')) {
+    return 'scientist';
+  }
+  
+  return 'strawfield'; // Padrão
+}
+
+  const createChat = async (autoAgent = null) => {
+  try {
+    const res = await fetch(`${API_URL}/api/chats`, {
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: 'Nova Conversa' }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setChats(prev => [data.chat, ...prev]);
+      setActiveChatId(data.chat.id);
+      setMessages([]);
+      // Se passou agente automático, usa ele
+      if (autoAgent) {
+        setCurrentAgent(autoAgent);
+        localStorage.setItem('sf_agent', autoAgent);
       }
-    } catch { setError(t.errorConnection); }
-    return null;
-  };
+      return data.chat.id;
+    }
+  } catch { setError(t.errorConnection); }
+  return null;
+};
 
   const selectChat = async (chatId) => {
     try {
@@ -600,7 +637,7 @@ useEffect(() => {
     if (!chatId) return;
   }
 
-  setMessages(prev => [...prev, { role: 'user', content: `/buscar: ${query}` }]);
+  setMessages(prev => [...prev, { role: 'user', content: `🔍 Buscar na web: ${query}` }]);
   setInput('');
   setLoading(true);
   setError(null);
@@ -614,21 +651,59 @@ useEffect(() => {
     if (!data.success) throw new Error(data.error || 'Erro na busca.');
 
     const searchResults = data.results || [];
-    let content = `🔍 **Resultados da busca por:** "${query}"\n\n`;
     
+    // Se não achou nada, avisa
     if (searchResults.length === 0) {
-      content += 'Nenhum resultado encontrado.';
-    } else {
-      searchResults.forEach((r, i) => {
-        const snippet = r.snippet ? r.snippet.substring(0, 200) : 'Sem descrição';
-        content += `${i + 1}. **${r.title}**\n   ${snippet}\n   ${r.url}\n\n`;
-      });
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: `Não encontrei resultados para "${query}". Tente reformular sua pergunta com outros termos.`,
+        model: 'Web Search'
+      }]);
+      playSound('receive');
+      setLoading(false);
+      return;
     }
+
+    // Monta o contexto pra IA explicar
+    let searchContext = `O usuário pesquisou: "${query}"\n\nAqui estão os resultados que encontrei na web:\n\n`;
+    
+    searchResults.forEach((r, i) => {
+      searchContext += `[${i + 1}] ${r.title}\n${r.snippet || 'Sem descrição'}\nURL: ${r.url}\n\n`;
+    });
+    
+    searchContext += `\nCom base nesses resultados, explique de forma clara e completa sobre "${query}". 
+Inclua os links relevantes no final da resposta.
+Responda em português brasileiro.`;
+
+    // Envia pra IA explicar
+    const explainRes = await fetch(`${API_URL}/api/chats/${chatId}/message`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ 
+        message: searchContext,
+        agent: 'strawfield' // Usa o agente padrão pra explicar
+      }),
+    });
+    
+    const explainData = await explainRes.json();
+    if (!explainData.success) throw new Error(explainData.error);
+
+    // Monta resposta final com explicação + links
+    let finalContent = explainData.data || 'Não consegui gerar uma explicação.';
+    
+    // Adiciona links no final
+    finalContent += `\n\n---\n\n**📚 Fontes consultadas:**\n`;
+    searchResults.forEach((r, i) => {
+      finalContent += `${i + 1}. [${r.title}](${r.url})\n`;
+    });
 
     setMessages(prev => [...prev, { 
       role: 'assistant', 
-      content,
-      model: 'Web Search'
+      content: finalContent,
+      model: 'Web Search + IA'
     }]);
     
     playSound('receive');
@@ -667,47 +742,29 @@ useEffect(() => {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || loading) return;
-    const text = input.trim();
-    setInput(''); setError(null); setShowPrompts(false);
+  if (!input.trim() || loading) return;
+  const text = input.trim();
+  
+  // Detecta agente automático
+  const detectedAgent = detectAgent(text);
+  if (detectedAgent !== currentAgent) {
+    setCurrentAgent(detectedAgent);
+    localStorage.setItem('sf_agent', detectedAgent);
+  }
+  
+  setInput(''); 
+  setError(null); 
+  setShowPrompts(false);
 
-    let chatId = activeChatId;
-    if (!chatId) {
-      chatId = await createChat();
-      if (!chatId) return;
-    }
+  let chatId = activeChatId;
+  if (!chatId) {
+    chatId = await createChat(detectedAgent);
+    if (!chatId) return;
+  }
 
-    playSound('send');
-    await sendMessage(text);
-  };
-
-  const handleNormal = async (chatId, text, currentMessages) => {
-    const res = await fetch(`${API_URL}/api/chats/${chatId}/message`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        'X-Device-Fingerprint': deviceFingerprint,
-      },
-      body: JSON.stringify({ message: text, agent: currentAgent }),
-    });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || t.errorConnection);
-
-    setMessages(prev => [...prev, { 
-      role: 'assistant', 
-      content: data.data,
-      thinking: data.thinking,
-      model: data.model
-    }]);
-    
-    if (notifications && 'Notification' in window && Notification.permission === 'granted') {
-      new Notification('StrawField AI', { body: 'Nova resposta recebida!', icon: '/favicon.ico' });
-    }
-    if (ttsEnabled) speak(data.data);
-    playSound('receive');
-    fetchChats();
-  };
+  playSound('send');
+  await sendMessage(text);
+};
 
   const handleStream = async (chatId, text, currentMessages) => {
     const res = await fetch(`${API_URL}/api/chats/${chatId}/message/stream`, {

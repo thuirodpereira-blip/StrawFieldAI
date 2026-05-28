@@ -28,6 +28,11 @@ const SYSTEM_PROMPT = `Você é a StrawField, uma assistente de IA inteligente, 
 - Teste mentalmente o código antes de enviar.
 - Se não tiver certeza, diga "não sei" em vez de inventar.`;
 
+// ===== WAKE-UP ENDPOINT (pro keep-alive do frontend) =====
+app.get('/api/wake', (req, res) => {
+  res.json({ success: true, status: 'awake', timestamp: new Date().toISOString() });
+});
+
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(morgan('combined'));
@@ -116,31 +121,21 @@ function moderate(text) {
 
 const SAFE_FALLBACK = 'Prefiro manter nossa conversa no respeito. Estou aqui para ajudar de forma construtiva. O que você precisa?';
 
-// ===== CHAMADA ÀS IAs COM FALLBACK + THINKING =====
+// ===== CHAMADA ÀS IAs COM FALLBACK MAIS FORTE =====
 async function callAI(messages, modelPreference = 'deepseek') {
   const errors = [];
   const providers = [];
 
-  if (deepseek) {
+  // Ordem: Gemini (mais barato) → OpenRouter (free) → DeepSeek → Groq → Ollama
+  // Groq vai pro FINAL porque tá no rate limit!
+
+  if (gemini) {
     providers.push(async () => {
-      const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-      const c = await deepseek.chat.completions.create({
+      const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+      const c = await gemini.chat.completions.create({
         model, messages, temperature: 0.7, max_tokens: 4096,
       });
-      const msg = c.choices[0]?.message;
-      let content = msg?.content || '';
-      let thinking = msg?.reasoning_content || null;
-      
-      // Se não tiver reasoning_content, parseia <think> tags (OpenRouter/Outros)
-      if (!thinking && content.includes('<think>')) {
-        const thinkMatch = content.match(/<<think>([\s\S]*?)<<\/think>/);
-        if (thinkMatch) {
-          thinking = thinkMatch[1].trim();
-          content = content.replace(/<<think>[\s\S]*?<\/think>/, '').trim();
-        }
-      }
-      
-      return { content, thinking, model: 'DeepSeek' };
+      return { content: c.choices[0]?.message?.content, thinking: null, model: 'Gemini' };
     });
   }
 
@@ -154,10 +149,10 @@ async function callAI(messages, modelPreference = 'deepseek') {
       let thinking = null;
       
       if (content.includes('<think>')) {
-        const thinkMatch = content.match(/<<think>([\s\S]*?)<<\/think>/);
+        const thinkMatch = content.match(/<<<think>([\s\S]*?)<<\/think>/);
         if (thinkMatch) {
           thinking = thinkMatch[1].trim();
-          content = content.replace(/<<think>[\s\S]*?<\/think>/, '').trim();
+          content = content.replace(/<<<think>[\s\S]*?<\/think>/, '').trim();
         }
       }
       
@@ -165,6 +160,29 @@ async function callAI(messages, modelPreference = 'deepseek') {
     });
   }
 
+  if (deepseek) {
+    providers.push(async () => {
+      const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+      const c = await deepseek.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096,
+      });
+      const msg = c.choices[0]?.message;
+      let content = msg?.content || '';
+      let thinking = msg?.reasoning_content || null;
+      
+      if (!thinking && content.includes('<think>')) {
+        const thinkMatch = content.match(/<<<think>([\s\S]*?)<<\/think>/);
+        if (thinkMatch) {
+          thinking = thinkMatch[1].trim();
+          content = content.replace(/<<<think>[\s\S]*?<\/think>/, '').trim();
+        }
+      }
+      
+      return { content, thinking, model: 'DeepSeek' };
+    });
+  }
+
+  // Groq vai pro FINAL (rate limit)
   if (groq) {
     providers.push(async () => {
       const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -172,16 +190,6 @@ async function callAI(messages, modelPreference = 'deepseek') {
         model, messages, temperature: 0.7, max_tokens: 4096,
       });
       return { content: c.choices[0]?.message?.content, thinking: null, model: 'Groq' };
-    });
-  }
-
-  if (gemini) {
-    providers.push(async () => {
-      const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-      const c = await gemini.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096,
-      });
-      return { content: c.choices[0]?.message?.content, thinking: null, model: 'Gemini' };
     });
   }
 
@@ -212,9 +220,55 @@ async function callAI(messages, modelPreference = 'deepseek') {
   throw new Error(`Nenhum provedor disponível.\n${errors.join('\n')}`);
 }
 
-// ===== STREAMING COM THINKING =====
+// ===== STREAMING COM FALLBACK REORDENADO =====
 async function callAIStream(messages, res) {
   const providers = [];
+
+  // Gemini primeiro (mais estável)
+  if (gemini) {
+    providers.push(async () => {
+      const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+      const stream = await gemini.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
+      });
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content) res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+      }
+      res.write('data: [DONE]\\n\\n');
+    });
+  }
+
+  if (openrouter) {
+    providers.push(async () => {
+      const model = process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free';
+      const stream = await openrouter.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
+      });
+      let buffer = '';
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        buffer += content;
+        
+        if (buffer.includes('<think>')) {
+          const thinkStart = buffer.indexOf('<think>');
+          const thinkEnd = buffer.indexOf('<think>');
+          if (thinkStart !== -1 && thinkEnd !== -1) {
+            const think = buffer.slice(thinkStart + 7, thinkEnd);
+            res.write(`data: ${JSON.stringify({ thinking: think })}\\n\\n`);
+            buffer = buffer.slice(thinkEnd + 8);
+          }
+        }
+        
+        if (buffer && !buffer.includes('<think>')) {
+          res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
+          buffer = '';
+        }
+      }
+      if (buffer) res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
+      res.write('data: [DONE]\\n\\n');
+    });
+  }
 
   if (deepseek) {
     providers.push(async () => {
@@ -239,38 +293,7 @@ async function callAIStream(messages, res) {
     });
   }
 
-  if (openrouter) {
-    providers.push(async () => {
-      const model = process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free';
-      const stream = await openrouter.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
-      });
-      let buffer = '';
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        buffer += content;
-        
-        // Detecta e extrai <think> em streaming
-        if (buffer.includes('<think>')) {
-          const thinkStart = buffer.indexOf('<think>');
-          const thinkEnd = buffer.indexOf('</think>');
-          if (thinkStart !== -1 && thinkEnd !== -1) {
-            const think = buffer.slice(thinkStart + 7, thinkEnd);
-            res.write(`data: ${JSON.stringify({ thinking: think })}\\n\\n`);
-            buffer = buffer.slice(thinkEnd + 8);
-          }
-        }
-        
-        if (buffer && !buffer.includes('<think>')) {
-          res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
-          buffer = '';
-        }
-      }
-      if (buffer) res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
-      res.write('data: [DONE]\\n\\n');
-    });
-  }
-
+  // Groq por último
   if (groq) {
     providers.push(async () => {
       const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -428,7 +451,7 @@ app.delete('/api/chats/:id', async (req, res) => {
   res.json({ success: true, message: 'Chat deletado.' });
 });
 
-// ===== DELETE MESSAGES FROM INDEX (Editar/Refazer) =====
+// ===== DELETE MESSAGES FROM INDEX =====
 app.delete('/api/chats/:id/messages/:index', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
@@ -446,7 +469,6 @@ app.delete('/api/chats/:id/messages/:index', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Índice inválido.' });
   }
 
-  // Apaga mensagens a partir do índice (inclusive)
   chat.messages = chat.messages.slice(0, index);
   chat.updatedAt = new Date().toISOString();
   await writeJson('chats.json', chats);
@@ -498,19 +520,22 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
     let fullThinking = '';
     let modelUsed = '';
 
-    // Usa streaming especial que retorna thinking separado
     const streamResp = await new Promise((resolve, reject) => {
-      // Tenta deepseek primeiro se disponível
-      if (deepseek) {
-        deepseek.chat.completions.create({
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+      if (gemini) {
+        gemini.chat.completions.create({
+          model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
           messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        }).then(s => resolve({ stream: s, model: 'DeepSeek' })).catch(reject);
+        }).then(s => resolve({ stream: s, model: 'Gemini' })).catch(reject);
       } else if (openrouter) {
         openrouter.chat.completions.create({
           model: process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free',
           messages, temperature: 0.7, max_tokens: 4096, stream: true,
         }).then(s => resolve({ stream: s, model: 'OpenRouter' })).catch(reject);
+      } else if (deepseek) {
+        deepseek.chat.completions.create({
+          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+          messages, temperature: 0.7, max_tokens: 4096, stream: true,
+        }).then(s => resolve({ stream: s, model: 'DeepSeek' })).catch(reject);
       } else if (groq) {
         groq.chat.completions.create({
           model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
@@ -535,15 +560,14 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
         res.write(`data: ${JSON.stringify({ thinking: reasoning })}\\n\\n`);
       }
       
-      // Parse <think> tags para OpenRouter/Outros
       if (content.includes('<think>') || thinkBuffer) {
         thinkBuffer += content;
-        if (thinkBuffer.includes('</think>')) {
-          const match = thinkBuffer.match(/<<think>([\s\S]*?)<<\/think>/);
+        if (thinkBuffer.includes('<think>')) {
+          const match = thinkBuffer.match(/<<<think>([\s\S]*?)<<\/think>/);
           if (match) {
             fullThinking += match[1];
             res.write(`data: ${JSON.stringify({ thinking: match[1] })}\\n\\n`);
-            const after = thinkBuffer.replace(/<<think>[\s\S]*?<\/think>/, '');
+            const after = thinkBuffer.replace(/<<<think>[\s\S]*?<\/think>/, '');
             if (after) {
               fullResponse += after;
               res.write(`data: ${JSON.stringify({ content: after })}\\n\\n`);
@@ -553,7 +577,6 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
           }
         }
         if (thinkBuffer.length > 10000) {
-          // Evita buffer infinito
           fullResponse += thinkBuffer;
           res.write(`data: ${JSON.stringify({ content: thinkBuffer })}\\n\\n`);
           thinkBuffer = '';
@@ -655,30 +678,24 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
 app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));
 
-// ===== WEB SEARCH (DuckDuckGo Scraping) =====
-// ===== WEB SEARCH (FIXED) =====
+// ===== WEB SEARCH (FIXED — AGORA EXPLICA OS RESULTADOS) =====
 app.get('/api/search', async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ success: false, error: 'Query obrigatória.' });
 
   try {
-    // Tenta DuckDuckGo HTML primeiro
     const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
       headers: { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html'
-      },
-      timeout: 10000
+      }
     });
     
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     
     const html = await response.text();
     
-    // Parse robusto com múltiplos padrões
     const results = [];
-    
-    // Padrão 1: result__a (clássico)
     const linkRegex = /<a rel="nofollow" class="result__a" href="([^"]+)">([^<<]+)<\/a>/g;
     const snippetRegex = /<a class="result__snippet"[^>]*>([^<<]+)<\/a>/g;
     
@@ -691,7 +708,6 @@ app.get('/api/search', async (req, res) => {
       });
     }
     
-    // Pega snippets
     let i = 0;
     let snippetMatch;
     while ((snippetMatch = snippetRegex.exec(html)) !== null && i < results.length) {
@@ -704,13 +720,15 @@ app.get('/api/search', async (req, res) => {
       i++;
     }
 
-    // Se não achou nada, tenta padrão alternativo (DuckDuckGo mudou o HTML)
-    if (results.length === 0) {
+    const filteredResults = results.slice(0, 5).filter(r => r.title && r.url);
+
+    // Se não achou nada, tenta padrão alternativo
+    if (filteredResults.length === 0) {
       const altRegex = /<a[^>]*href="([^"]*)"[^>]*class="[^"]*result[^"]*"[^>]*>([^<<]*)<<\/a>/g;
       let altMatch;
       while ((altMatch = altRegex.exec(html)) !== null) {
         if (altMatch[1].startsWith('http')) {
-          results.push({
+          filteredResults.push({
             title: altMatch[2].trim() || 'Sem título',
             url: altMatch[1],
             snippet: 'Clique para ver mais.'
@@ -719,26 +737,15 @@ app.get('/api/search', async (req, res) => {
       }
     }
 
-    res.json({ success: true, results: results.slice(0, 5) });
+    res.json({ success: true, results: filteredResults });
   } catch (error) {
     console.error('Search error:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Busca temporariamente indisponível. O serviço de busca pode estar bloqueando requisições automatizadas.',
+      error: 'Busca temporariamente indisponível. O DuckDuckGo pode estar bloqueando requisições.',
       details: error.message
     });
   }
-});
-
-// ===== IMAGE GENERATION (Pollinations - GRÁTIS) =====
-app.get('/api/image', async (req, res) => {
-  const { prompt } = req.query;
-  if (!prompt) return res.status(400).json({ success: false, error: 'Prompt obrigatório.' });
-
-  const seed = Math.floor(Math.random() * 10000);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true`;
-  
-  res.json({ success: true, url, prompt });
 });
 
 // ===== ADMIN / BAN =====
