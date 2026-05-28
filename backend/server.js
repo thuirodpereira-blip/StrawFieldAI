@@ -656,40 +656,77 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));
 
 // ===== WEB SEARCH (DuckDuckGo Scraping) =====
+// ===== WEB SEARCH (FIXED) =====
 app.get('/api/search', async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ success: false, error: 'Query obrigatória.' });
 
   try {
+    // Tenta DuckDuckGo HTML primeiro
     const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html'
+      },
+      timeout: 10000
     });
+    
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    
     const html = await response.text();
     
-    // Parse simples com regex
+    // Parse robusto com múltiplos padrões
     const results = [];
+    
+    // Padrão 1: result__a (clássico)
     const linkRegex = /<a rel="nofollow" class="result__a" href="([^"]+)">([^<<]+)<\/a>/g;
     const snippetRegex = /<a class="result__snippet"[^>]*>([^<<]+)<\/a>/g;
     
     let linkMatch;
     while ((linkMatch = linkRegex.exec(html)) !== null) {
-      const url = linkMatch[1].replace(/&amp;/g, '&');
-      const title = linkMatch[2].replace(/&amp;/g, '&').replace(/&quot;/g, '"');
-      results.push({ title, url, snippet: '' });
+      results.push({
+        title: linkMatch[2].replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim(),
+        url: linkMatch[1].replace(/&amp;/g, '&'),
+        snippet: ''
+      });
     }
     
     // Pega snippets
     let i = 0;
     let snippetMatch;
     while ((snippetMatch = snippetRegex.exec(html)) !== null && i < results.length) {
-      results[i].snippet = snippetMatch[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+      results[i].snippet = snippetMatch[1]
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .trim();
       i++;
+    }
+
+    // Se não achou nada, tenta padrão alternativo (DuckDuckGo mudou o HTML)
+    if (results.length === 0) {
+      const altRegex = /<a[^>]*href="([^"]*)"[^>]*class="[^"]*result[^"]*"[^>]*>([^<<]*)<<\/a>/g;
+      let altMatch;
+      while ((altMatch = altRegex.exec(html)) !== null) {
+        if (altMatch[1].startsWith('http')) {
+          results.push({
+            title: altMatch[2].trim() || 'Sem título',
+            url: altMatch[1],
+            snippet: 'Clique para ver mais.'
+          });
+        }
+      }
     }
 
     res.json({ success: true, results: results.slice(0, 5) });
   } catch (error) {
     console.error('Search error:', error);
-    res.status(500).json({ success: false, error: 'Erro na busca. Tente novamente.' });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Busca temporariamente indisponível. O serviço de busca pode estar bloqueando requisições automatizadas.',
+      details: error.message
+    });
   }
 });
 

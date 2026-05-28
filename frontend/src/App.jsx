@@ -381,15 +381,29 @@ export default function App() {
     return () => clearInterval(interval);
   }, [token]);
 
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.hidden && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, []);
+  // ❌ APAGA O ANTIGO E COLE ISSO:
+useEffect(() => {
+  const handleVisibility = () => {
+    if (document.hidden) {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    } else {
+      // Wake backend quando volta
+      fetch(`${API_URL}/api/health`).catch(() => {});
+      // Limpa loading travado
+      setLoading(prev => {
+        if (prev) {
+          setError('Conexão perdida. Tente enviar novamente.');
+          return false;
+        }
+        return prev;
+      });
+      // Força re-render
+      setMessages(prev => [...prev]);
+    }
+  };
+  document.addEventListener('visibilitychange', handleVisibility);
+  return () => document.removeEventListener('visibilitychange', handleVisibility);
+}, []);
 
   const fetchUser = async () => {
     try {
@@ -418,6 +432,7 @@ export default function App() {
         setChats(prev => [data.chat, ...prev]);
         setActiveChatId(data.chat.id);
         setMessages([]);
+        setCurrentAgent(prev => prev || 'strawfield');
         return data.chat.id;
       }
     } catch { setError(t.errorConnection); }
@@ -445,7 +460,12 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         setChats(prev => prev.filter(c => c.id !== chatId));
-        if (activeChatId === chatId) { setActiveChatId(null); setMessages([]); }
+        if (activeChatId === chatId) { 
+          setActiveChatId(null); 
+          setMessages([]); 
+          setCurrentAgent('strawfield');
+          localStorage.setItem('sf_agent', 'strawfield');
+        }
       }
     } catch { setError(t.errorConnection); }
   };
@@ -571,51 +591,55 @@ export default function App() {
   };
 
   const searchWeb = async () => {
-    if (!input.trim()) return;
-    const query = input.trim();
+  if (!input.trim()) return;
+  const query = input.trim();
+  
+  let chatId = activeChatId;
+  if (!chatId) {
+    chatId = await createChat();
+    if (!chatId) return;
+  }
+
+  setMessages(prev => [...prev, { role: 'user', content: `/buscar: ${query}` }]);
+  setInput('');
+  setLoading(true);
+  setError(null);
+
+  try {
+    const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
     
-    let chatId = activeChatId;
-    if (!chatId) {
-      chatId = await createChat();
-      if (!chatId) return;
+    if (!data.success) throw new Error(data.error || 'Erro na busca.');
+
+    const searchResults = data.results || [];
+    let content = `🔍 **Resultados da busca por:** "${query}"\n\n`;
+    
+    if (searchResults.length === 0) {
+      content += 'Nenhum resultado encontrado.';
+    } else {
+      searchResults.forEach((r, i) => {
+        const snippet = r.snippet ? r.snippet.substring(0, 200) : 'Sem descrição';
+        content += `${i + 1}. **${r.title}**\n   ${snippet}\n   ${r.url}\n\n`;
+      });
     }
 
-    setMessages(prev => [...prev, { role: 'user', content: `/buscar: ${query}` }]);
-    setInput('');
-    setLoading(true);
-
-    try {
-      const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`);
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error);
-
-      const searchResults = data.results || [];
-      let content = `🔍 **Resultados da busca por:** "${query}"\n\n`;
-      
-      if (searchResults.length === 0) {
-        content += 'Nenhum resultado encontrado.';
-      } else {
-        searchResults.forEach((r, i) => {
-          content += `${i + 1}. **[${r.title}](${r.url})**\n   ${r.snippet || ''}\n\n`;
-        });
-      }
-
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content,
-        searchResults,
-        model: 'Web Search'
-      }]);
-      
-      playSound('receive');
-      fetchChats();
-    } catch (err) {
-      setError(err.message || t.errorConnection);
-      playSound('error');
-    } finally {
-      setLoading(false);
-    }
-  };
+    setMessages(prev => [...prev, { 
+      role: 'assistant', 
+      content,
+      model: 'Web Search'
+    }]);
+    
+    playSound('receive');
+    fetchChats();
+  } catch (err) {
+    setError(err.message || 'Busca indisponível no momento.');
+    playSound('error');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const sendMessage = async (text, customMessages = null, skipAddUser = false) => {
     const currentMessages = customMessages || messages;
