@@ -10,19 +10,15 @@ import fs from 'fs/promises';
 import path from 'path';
 import OpenAI from 'openai';
 import multer from 'multer';
-import { createHash } from 'crypto';
 
 dotenv.config();
 
 const app = express();
 const DATA_DIR = path.join(process.cwd(), 'data');
 
-// ===== MULTER (upload de arquivos) =====
 const upload = multer({ dest: path.join(DATA_DIR, 'uploads') });
 
-// ===== AGENTES / PERSONALIDADES =====
-const AGENTS = {
-  strawfield: `Você é a StrawField, uma assistente de IA inteligente, criativa e com personalidade própria.
+const SYSTEM_PROMPT = `Você é a StrawField, uma assistente de IA inteligente, criativa e com personalidade própria.
 - Seu nome é StrawField.
 - Tom amigável e natural, como um amigo que entende de tecnologia.
 - Sabe escrever código, explicar conceitos, criar scripts, resolver problemas.
@@ -30,36 +26,8 @@ const AGENTS = {
 - NUNCA xingue, ofenda ou desrespeite o usuário.
 - Antes de responder código, analise o problema passo a passo.
 - Teste mentalmente o código antes de enviar.
-- Se não tiver certeza, diga "não sei" em vez de inventar.`,
+- Se não tiver certeza, diga "não sei" em vez de inventar.`;
 
-  coder: `Você é o CodeMaster, um especialista em programação.
-- Foco técnico, respostas diretas e com código bem formatado.
-- Sempre explica o código quando necessário.
-- Dá dicas de performance e boas práticas.
-- Tom profissional mas acessível.
-- Analise o problema antes de codar.
-- Verifique se as funções existem realmente.`,
-
-  teacher: `Você é o Professor, um educador paciente e didático.
-- Explica conceitos passo a passo, do básico ao avançado.
-- Usa analogias simples para facilitar o entendimento.
-- Incentiva o aprendizado e a curiosidade.
-- Tom calmo, encorajador e claro.`,
-
-  creative: `Você é o Criativo, um brainstorming partner ilimitado.
-- Gera ideias inovadoras, conceitos artísticos e soluções fora da caixa.
-- Ajuda com roteiros, histórias, design, marketing e criação de conteúdo.
-- Tom inspirador, energético e imaginativo.`,
-
-  scientist: `Você é o Cientista, focado em fatos, dados e evidências.
-- Respostas baseadas em ciência, lógica e racionalidade.
-- Cita fontes e explica metodologias quando possível.
-- Tom objetivo, analítico e preciso.`
-};
-
-const DEFAULT_AGENT = 'strawfield';
-
-// ===== MIDDLEWARES =====
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(morgan('combined'));
@@ -74,7 +42,6 @@ app.use('/api/', limiter);
 await fs.mkdir(DATA_DIR, { recursive: true });
 await fs.mkdir(path.join(DATA_DIR, 'uploads'), { recursive: true });
 
-// ===== HELPERS =====
 async function readJson(file) {
   try {
     const raw = await fs.readFile(path.join(DATA_DIR, file), 'utf-8');
@@ -88,7 +55,6 @@ async function writeJson(file, data) {
   await fs.writeFile(path.join(DATA_DIR, file), JSON.stringify(data, null, 2), 'utf-8');
 }
 
-// ===== CLIENTES DE IA =====
 const deepseek = (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY.trim() !== '')
   ? new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/v1' })
   : null;
@@ -114,7 +80,6 @@ const gemini = (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() 
 
 const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
 
-// ===== SCHEMAS =====
 const registerSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
   password: z.string().min(4).max(100),
@@ -132,7 +97,6 @@ const messageSchema = z.object({
   stream: z.boolean().optional(),
 });
 
-// ===== MODERAÇÃO (palavras exatas, não regex) =====
 const FORBIDDEN = new Set([
   'idiota','imbecil','estupido','estúpido','burro','retardado',
   'filhodaputa','filho da puta','merda','bosta','cu','caralho','porra',
@@ -152,92 +116,75 @@ function moderate(text) {
 
 const SAFE_FALLBACK = 'Prefiro manter nossa conversa no respeito. Estou aqui para ajudar de forma construtiva. O que você precisa?';
 
-// ===== CHAMADA ÀS IAs COM FALLBACK =====
-async function callAI(messages, stream = false, res = null) {
+// ===== CHAMADA ÀS IAs COM FALLBACK + THINKING =====
+async function callAI(messages, modelPreference = 'deepseek') {
   const errors = [];
   const providers = [];
 
-  // 1. DeepSeek (mais inteligente pra código)
   if (deepseek) {
     providers.push(async () => {
       const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-      if (stream && res) {
-        const streamResp = await deepseek.chat.completions.create({
-          model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        });
-        for await (const chunk of streamResp) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+      const c = await deepseek.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096,
+      });
+      const msg = c.choices[0]?.message;
+      let content = msg?.content || '';
+      let thinking = msg?.reasoning_content || null;
+      
+      // Se não tiver reasoning_content, parseia <think> tags (OpenRouter/Outros)
+      if (!thinking && content.includes('<think>')) {
+        const thinkMatch = content.match(/<<think>([\s\S]*?)<<\/think>/);
+        if (thinkMatch) {
+          thinking = thinkMatch[1].trim();
+          content = content.replace(/<<think>[\s\S]*?<\/think>/, '').trim();
         }
-        res.write('data: [DONE]\\n\\n');
-        return null;
-      } else {
-        const c = await deepseek.chat.completions.create({
-          model, messages, temperature: 0.7, max_tokens: 4096,
-        });
-        return c.choices[0]?.message?.content;
       }
+      
+      return { content, thinking, model: 'DeepSeek' };
     });
   }
 
-  // 2. OpenRouter (Qwen Coder, etc)
   if (openrouter) {
     providers.push(async () => {
       const model = process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free';
-      if (stream && res) {
-        const streamResp = await openrouter.chat.completions.create({
-          model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        });
-        for await (const chunk of streamResp) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+      const c = await openrouter.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096,
+      });
+      let content = c.choices[0]?.message?.content || '';
+      let thinking = null;
+      
+      if (content.includes('<think>')) {
+        const thinkMatch = content.match(/<<think>([\s\S]*?)<<\/think>/);
+        if (thinkMatch) {
+          thinking = thinkMatch[1].trim();
+          content = content.replace(/<<think>[\s\S]*?<\/think>/, '').trim();
         }
-        res.write('data: [DONE]\\n\\n');
-        return null;
-      } else {
-        const c = await openrouter.chat.completions.create({
-          model, messages, temperature: 0.7, max_tokens: 4096,
-        });
-        return c.choices[0]?.message?.content;
       }
+      
+      return { content, thinking, model: 'OpenRouter' };
     });
   }
 
-  // 3. Groq (rápido)
   if (groq) {
     providers.push(async () => {
       const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-      if (stream && res) {
-        const streamResp = await groq.chat.completions.create({
-          model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        });
-        for await (const chunk of streamResp) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
-        }
-        res.write('data: [DONE]\\n\\n');
-        return null;
-      } else {
-        const c = await groq.chat.completions.create({
-          model, messages, temperature: 0.7, max_tokens: 4096,
-        });
-        return c.choices[0]?.message?.content;
-      }
+      const c = await groq.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096,
+      });
+      return { content: c.choices[0]?.message?.content, thinking: null, model: 'Groq' };
     });
   }
 
-  // 4. Gemini
   if (gemini) {
     providers.push(async () => {
       const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
       const c = await gemini.chat.completions.create({
         model, messages, temperature: 0.7, max_tokens: 4096,
       });
-      return c.choices[0]?.message?.content;
+      return { content: c.choices[0]?.message?.content, thinking: null, model: 'Gemini' };
     });
   }
 
-  // 5. Ollama (local)
   providers.push(async () => {
     const res = await fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -245,28 +192,110 @@ async function callAI(messages, stream = false, res = null) {
     });
     if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
     const data = await res.json();
-    return data.message?.content;
+    return { content: data.message?.content, thinking: null, model: 'Ollama' };
   });
 
-  // Tenta cada provedor
   for (const provider of providers) {
     try {
       const result = await provider();
-      if (result !== null) return result;
-      if (stream && res) return null;
+      if (result.content) return result;
     } catch (e) {
       errors.push(e.message);
-      // Se for rate limit, continua pro próximo
-      if (e.message.includes('rate_limit') || e.message.includes('429') || e.message.includes('too many')) {
+      if (e.message.includes('rate_limit') || e.message.includes('429') || e.message.includes('too many') || e.message.includes('Limit')) {
         console.warn(`[RATE LIMIT] ${e.message}, tentando próximo...`);
         continue;
       }
-      // Se não for rate limit e não tiver mais opções, throw
       if (provider === providers[providers.length - 1]) throw e;
     }
   }
 
-  throw new Error(`Nenhum provedor disponível.\\n${errors.join('\\n')}`);
+  throw new Error(`Nenhum provedor disponível.\n${errors.join('\n')}`);
+}
+
+// ===== STREAMING COM THINKING =====
+async function callAIStream(messages, res) {
+  const providers = [];
+
+  if (deepseek) {
+    providers.push(async () => {
+      const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+      const stream = await deepseek.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
+      });
+      let inThink = false;
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        const content = delta?.content || '';
+        const reasoning = delta?.reasoning_content || '';
+        
+        if (reasoning) {
+          res.write(`data: ${JSON.stringify({ thinking: reasoning })}\\n\\n`);
+        }
+        if (content) {
+          res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+        }
+      }
+      res.write('data: [DONE]\\n\\n');
+    });
+  }
+
+  if (openrouter) {
+    providers.push(async () => {
+      const model = process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free';
+      const stream = await openrouter.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
+      });
+      let buffer = '';
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        buffer += content;
+        
+        // Detecta e extrai <think> em streaming
+        if (buffer.includes('<think>')) {
+          const thinkStart = buffer.indexOf('<think>');
+          const thinkEnd = buffer.indexOf('</think>');
+          if (thinkStart !== -1 && thinkEnd !== -1) {
+            const think = buffer.slice(thinkStart + 7, thinkEnd);
+            res.write(`data: ${JSON.stringify({ thinking: think })}\\n\\n`);
+            buffer = buffer.slice(thinkEnd + 8);
+          }
+        }
+        
+        if (buffer && !buffer.includes('<think>')) {
+          res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
+          buffer = '';
+        }
+      }
+      if (buffer) res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
+      res.write('data: [DONE]\\n\\n');
+    });
+  }
+
+  if (groq) {
+    providers.push(async () => {
+      const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+      const stream = await groq.chat.completions.create({
+        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
+      });
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content) res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+      }
+      res.write('data: [DONE]\\n\\n');
+    });
+  }
+
+  for (const provider of providers) {
+    try {
+      await provider();
+      return;
+    } catch (e) {
+      console.warn(`[STREAM ERROR] ${e.message}, tentando próximo...`);
+      continue;
+    }
+  }
+
+  res.write(`data: ${JSON.stringify({ error: 'Todos os provedores falharam.' })}\\n\\n`);
 }
 
 // ===== AUTH ROUTES =====
@@ -281,11 +310,7 @@ app.post('/api/auth/register', async (req, res) => {
 
   const hash = await bcrypt.hash(password, 10);
   const token = uuidv4();
-  users[username] = {
-    username, passwordHash: hash,
-    displayName: displayName || username,
-    token, createdAt: new Date().toISOString(),
-  };
+  users[username] = { username, passwordHash: hash, displayName: displayName || username, token, createdAt: new Date().toISOString() };
   await writeJson('users.json', users);
 
   const chats = await readJson('chats.json');
@@ -318,10 +343,7 @@ app.post('/api/auth/guest', async (req, res) => {
   const guestId = 'guest_' + uuidv4().slice(0, 8);
   const token = uuidv4();
   const users = await readJson('users.json');
-  users[guestId] = {
-    username: guestId, displayName: 'Convidado',
-    token, isGuest: true, createdAt: new Date().toISOString(),
-  };
+  users[guestId] = { username: guestId, displayName: 'Convidado', token, isGuest: true, createdAt: new Date().toISOString() };
   await writeJson('users.json', users);
 
   const chats = await readJson('chats.json');
@@ -406,6 +428,32 @@ app.delete('/api/chats/:id', async (req, res) => {
   res.json({ success: true, message: 'Chat deletado.' });
 });
 
+// ===== DELETE MESSAGES FROM INDEX (Editar/Refazer) =====
+app.delete('/api/chats/:id/messages/:index', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
+
+  const users = await readJson('users.json');
+  const user = Object.values(users).find(u => u.token === token);
+  if (!user) return res.status(401).json({ success: false, error: 'Token inválido.' });
+
+  const chats = await readJson('chats.json');
+  const chat = (chats[user.username] || []).find(c => c.id === req.params.id);
+  if (!chat) return res.status(404).json({ success: false, error: 'Chat não encontrado.' });
+
+  const index = parseInt(req.params.index);
+  if (isNaN(index) || index < 0 || index >= chat.messages.length) {
+    return res.status(400).json({ success: false, error: 'Índice inválido.' });
+  }
+
+  // Apaga mensagens a partir do índice (inclusive)
+  chat.messages = chat.messages.slice(0, index);
+  chat.updatedAt = new Date().toISOString();
+  await writeJson('chats.json', chats);
+
+  res.json({ success: true, messages: chat.messages });
+});
+
 // ===== STREAMING ROUTE =====
 app.post('/api/chats/:id/message/stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -442,24 +490,99 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
   chat.messages.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
 
   const history = chat.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
-  const agentKey = agent || DEFAULT_AGENT;
-  const systemPrompt = AGENTS[agentKey] || AGENTS[DEFAULT_AGENT];
+  const systemPrompt = SYSTEM_PROMPT;
   const messages = [{ role: 'system', content: systemPrompt }, ...history];
 
   try {
     let fullResponse = '';
-    const result = await callAI(messages, true, res);
-    
-    if (result) {
-      fullResponse = result;
-    } else {
-      // Streaming já foi enviado pelo callAI
-      fullResponse = '(resposta em streaming)';
+    let fullThinking = '';
+    let modelUsed = '';
+
+    // Usa streaming especial que retorna thinking separado
+    const streamResp = await new Promise((resolve, reject) => {
+      // Tenta deepseek primeiro se disponível
+      if (deepseek) {
+        deepseek.chat.completions.create({
+          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+          messages, temperature: 0.7, max_tokens: 4096, stream: true,
+        }).then(s => resolve({ stream: s, model: 'DeepSeek' })).catch(reject);
+      } else if (openrouter) {
+        openrouter.chat.completions.create({
+          model: process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free',
+          messages, temperature: 0.7, max_tokens: 4096, stream: true,
+        }).then(s => resolve({ stream: s, model: 'OpenRouter' })).catch(reject);
+      } else if (groq) {
+        groq.chat.completions.create({
+          model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+          messages, temperature: 0.7, max_tokens: 4096, stream: true,
+        }).then(s => resolve({ stream: s, model: 'Groq' })).catch(reject);
+      } else {
+        reject(new Error('Nenhum provedor de streaming disponível'));
+      }
+    });
+
+    const { stream, model } = streamResp;
+    modelUsed = model;
+    let thinkBuffer = '';
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      const content = delta?.content || '';
+      const reasoning = delta?.reasoning_content || '';
+      
+      if (reasoning) {
+        fullThinking += reasoning;
+        res.write(`data: ${JSON.stringify({ thinking: reasoning })}\\n\\n`);
+      }
+      
+      // Parse <think> tags para OpenRouter/Outros
+      if (content.includes('<think>') || thinkBuffer) {
+        thinkBuffer += content;
+        if (thinkBuffer.includes('</think>')) {
+          const match = thinkBuffer.match(/<<think>([\s\S]*?)<<\/think>/);
+          if (match) {
+            fullThinking += match[1];
+            res.write(`data: ${JSON.stringify({ thinking: match[1] })}\\n\\n`);
+            const after = thinkBuffer.replace(/<<think>[\s\S]*?<\/think>/, '');
+            if (after) {
+              fullResponse += after;
+              res.write(`data: ${JSON.stringify({ content: after })}\\n\\n`);
+            }
+            thinkBuffer = '';
+            continue;
+          }
+        }
+        if (thinkBuffer.length > 10000) {
+          // Evita buffer infinito
+          fullResponse += thinkBuffer;
+          res.write(`data: ${JSON.stringify({ content: thinkBuffer })}\\n\\n`);
+          thinkBuffer = '';
+        }
+        continue;
+      }
+      
+      if (content) {
+        fullResponse += content;
+        res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+      }
     }
 
-    if (fullResponse && fullResponse !== '(resposta em streaming)') {
+    if (thinkBuffer) {
+      fullResponse += thinkBuffer;
+    }
+
+    res.write('data: [DONE]\\n\\n');
+    res.write(`data: ${JSON.stringify({ model: modelUsed })}\\n\\n`);
+
+    if (fullResponse) {
       if (!moderate(fullResponse)) fullResponse = SAFE_FALLBACK;
-      chat.messages.push({ role: 'assistant', content: fullResponse, timestamp: new Date().toISOString() });
+      chat.messages.push({ 
+        role: 'assistant', 
+        content: fullResponse, 
+        thinking: fullThinking || undefined,
+        model: modelUsed,
+        timestamp: new Date().toISOString() 
+      });
       chat.updatedAt = new Date().toISOString();
       if (chat.messages.length === 2 && chat.title === 'Nova Conversa') {
         chat.title = message.slice(0, 40) + (message.length > 40 ? '...' : '');
@@ -496,15 +619,20 @@ app.post('/api/chats/:id/message', async (req, res) => {
   chat.messages.push({ role: 'user', content: message, timestamp });
 
   const history = chat.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
-  const agentKey = agent || DEFAULT_AGENT;
-  const systemPrompt = AGENTS[agentKey] || AGENTS[DEFAULT_AGENT];
-  const messages = [{ role: 'system', content: systemPrompt }, ...history];
+  const messages = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
 
   try {
-    let responseText = await callAI(messages);
+    const result = await callAI(messages);
+    let responseText = result.content;
     if (!moderate(responseText)) responseText = SAFE_FALLBACK;
 
-    chat.messages.push({ role: 'assistant', content: responseText, timestamp: new Date().toISOString() });
+    chat.messages.push({ 
+      role: 'assistant', 
+      content: responseText, 
+      thinking: result.thinking || undefined,
+      model: result.model,
+      timestamp: new Date().toISOString() 
+    });
     chat.updatedAt = new Date().toISOString();
 
     if (chat.messages.length === 2 && chat.title === 'Nova Conversa') {
@@ -512,7 +640,7 @@ app.post('/api/chats/:id/message', async (req, res) => {
     }
 
     await writeJson('chats.json', chats);
-    res.json({ success: true, data: responseText, timestamp: new Date().toISOString() });
+    res.json({ success: true, data: responseText, thinking: result.thinking, model: result.model, timestamp: new Date().toISOString() });
   } catch (error) {
     console.error('Erro IA:', error);
     res.status(500).json({ success: false, error: error.message || 'Erro interno. Tente novamente.', timestamp });
@@ -527,6 +655,55 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
 app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));
 
+// ===== WEB SEARCH (DuckDuckGo Scraping) =====
+app.get('/api/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.status(400).json({ success: false, error: 'Query obrigatória.' });
+
+  try {
+    const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+    const html = await response.text();
+    
+    // Parse simples com regex
+    const results = [];
+    const linkRegex = /<a rel="nofollow" class="result__a" href="([^"]+)">([^<<]+)<\/a>/g;
+    const snippetRegex = /<a class="result__snippet"[^>]*>([^<<]+)<\/a>/g;
+    
+    let linkMatch;
+    while ((linkMatch = linkRegex.exec(html)) !== null) {
+      const url = linkMatch[1].replace(/&amp;/g, '&');
+      const title = linkMatch[2].replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+      results.push({ title, url, snippet: '' });
+    }
+    
+    // Pega snippets
+    let i = 0;
+    let snippetMatch;
+    while ((snippetMatch = snippetRegex.exec(html)) !== null && i < results.length) {
+      results[i].snippet = snippetMatch[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+      i++;
+    }
+
+    res.json({ success: true, results: results.slice(0, 5) });
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({ success: false, error: 'Erro na busca. Tente novamente.' });
+  }
+});
+
+// ===== IMAGE GENERATION (Pollinations - GRÁTIS) =====
+app.get('/api/image', async (req, res) => {
+  const { prompt } = req.query;
+  if (!prompt) return res.status(400).json({ success: false, error: 'Prompt obrigatório.' });
+
+  const seed = Math.floor(Math.random() * 10000);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true`;
+  
+  res.json({ success: true, url, prompt });
+});
+
 // ===== ADMIN / BAN =====
 app.post('/api/admin/ban', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -537,7 +714,6 @@ app.post('/api/admin/ban', async (req, res) => {
   const { fingerprint } = req.body;
   if (!fingerprint) return res.status(400).json({ success: false, error: 'Fingerprint obrigatório.' });
 
-  // Anti auto-ban
   const currentFp = req.headers['x-device-fingerprint'];
   if (fingerprint === currentFp) return res.status(400).json({ success: false, error: 'Você não pode se banir! 🍓' });
 

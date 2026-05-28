@@ -1,0 +1,17 @@
+{
+  "name": "StrawField AI",
+  "short_name": "StrawField",
+  "description": "Sua IA parceira inteligente",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111827",
+  "theme_color": "#111827",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

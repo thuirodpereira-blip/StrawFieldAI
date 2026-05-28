@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus, MessageSquare, LogOut, Ghost, Sparkles, Menu, X, Volume2, VolumeX, Download, Bell, BellOff, Settings as SettingsIcon, Heart, Code, BookOpen, Atom, Palette, Globe, Cpu, Check, ArrowLeft, Shield, Zap } from 'lucide-react';
+import { Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus, MessageSquare, LogOut, Ghost, Sparkles, Menu, X, Volume2, VolumeX, Download, Bell, BellOff, Settings as SettingsIcon, Heart, Code, BookOpen, Atom, Palette, Globe, Cpu, Check, ArrowLeft, Shield, Zap, Edit3, RefreshCw, Image as ImageIcon, Search, Copy, CheckCircle, XCircle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
 import Agents from './Agents';
 import Settings from './Settings';
 import Credits from './Credits';
@@ -40,6 +44,15 @@ const TRANSLATIONS = {
     startChat: 'Inicie uma conversa!',
     errorConnection: 'Erro de conexão',
     retry: 'Tentar novamente',
+    thinkingLabel: '💭 Pensamento',
+    modelLabel: 'Modelo',
+    copy: 'Copiar',
+    copied: 'Copiado!',
+    edit: 'Editar',
+    regenerate: 'Refazer',
+    dropFile: 'Solte o arquivo aqui',
+    searchWeb: 'Buscar na web',
+    generateImage: 'Gerar imagem',
   },
   en: {
     welcome: 'Welcome to StrawField AI',
@@ -65,6 +78,15 @@ const TRANSLATIONS = {
     startChat: 'Start a conversation!',
     errorConnection: 'Connection error',
     retry: 'Retry',
+    thinkingLabel: '💭 Thinking',
+    modelLabel: 'Model',
+    copy: 'Copy',
+    copied: 'Copied!',
+    edit: 'Edit',
+    regenerate: 'Regenerate',
+    dropFile: 'Drop file here',
+    searchWeb: 'Search web',
+    generateImage: 'Generate image',
   },
   es: {
     welcome: 'Bienvenido a StrawField AI',
@@ -90,6 +112,15 @@ const TRANSLATIONS = {
     startChat: '¡Inicia una conversación!',
     errorConnection: 'Error de conexión',
     retry: 'Reintentar',
+    thinkingLabel: '💭 Pensamiento',
+    modelLabel: 'Modelo',
+    copy: 'Copiar',
+    copied: '¡Copiado!',
+    edit: 'Editar',
+    regenerate: 'Rehacer',
+    dropFile: 'Suelta el archivo aquí',
+    searchWeb: 'Buscar en la web',
+    generateImage: 'Generar imagen',
   },
 };
 
@@ -116,6 +147,123 @@ function generateFingerprint() {
     hash = hash & hash;
   }
   return 'fp_' + Math.abs(hash).toString(16);
+}
+
+// ===== SOUND EFFECTS =====
+function playSound(type) {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    if (type === 'send') {
+      osc.frequency.value = 600;
+      gain.gain.value = 0.03;
+      osc.start();
+      osc.stop(ctx.currentTime + 0.08);
+    } else if (type === 'receive') {
+      osc.frequency.value = 450;
+      gain.gain.value = 0.03;
+      osc.start();
+      osc.stop(ctx.currentTime + 0.12);
+    } else if (type === 'error') {
+      osc.frequency.value = 150;
+      gain.gain.value = 0.05;
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    }
+  } catch {}
+}
+
+// ===== MARKDOWN RENDERER =====
+function CodeBlock({ language, children }) {
+  const [copied, setCopied] = useState(false);
+  
+  const handleCopy = () => {
+    navigator.clipboard.writeText(children);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="relative group my-2">
+      <div className="flex items-center justify-between px-3 py-1 bg-gray-800 rounded-t-lg border-b border-gray-700">
+        <span className="text-xs text-gray-400">{language || 'code'}</span>
+        <button 
+          onClick={handleCopy}
+          className="p-1 rounded hover:bg-gray-700 transition-colors text-gray-400"
+        >
+          {copied ? <CheckCircle className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+      <pre className="bg-gray-900 p-3 rounded-b-lg overflow-x-auto">
+        <code className="text-sm">{children}</code>
+      </pre>
+    </div>
+  );
+}
+
+function MarkdownRenderer({ content, darkMode }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
+      components={{
+        code({ node, inline, className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || '');
+          return !inline && match ? (
+            <CodeBlock language={match[1]}>{String(children).replace(/\n$/, '')}</CodeBlock>
+          ) : (
+            <code className={`px-1.5 py-0.5 rounded text-sm ${darkMode ? 'bg-gray-700 text-pink-300' : 'bg-gray-200 text-pink-600'}`} {...props}>
+              {children}
+            </code>
+          );
+        },
+        pre({ children }) {
+          return <>{children}</>;
+        },
+        p({ children }) {
+          return <p className="mb-2 last:mb-0">{children}</p>;
+        },
+        ul({ children }) {
+          return <ul className="list-disc ml-4 mb-2">{children}</ul>;
+        },
+        ol({ children }) {
+          return <ol className="list-decimal ml-4 mb-2">{children}</ol>;
+        },
+        li({ children }) {
+          return <li className="mb-0.5">{children}</li>;
+        },
+        h1({ children }) {
+          return <h1 className="text-lg font-bold mb-2 mt-3">{children}</h1>;
+        },
+        h2({ children }) {
+          return <h2 className="text-base font-bold mb-2 mt-2">{children}</h2>;
+        },
+        h3({ children }) {
+          return <h3 className="text-sm font-bold mb-1 mt-2">{children}</h3>;
+        },
+        blockquote({ children }) {
+          return <blockquote className={`border-l-4 pl-3 italic my-2 ${darkMode ? 'border-pink-500 text-gray-300' : 'border-pink-400 text-gray-600'}`}>{children}</blockquote>;
+        },
+        table({ children }) {
+          return <table className="w-full text-sm border-collapse my-2">{children}</table>;
+        },
+        th({ children }) {
+          return <th className={`border px-2 py-1 text-left ${darkMode ? 'border-gray-600 bg-gray-800' : 'border-gray-300 bg-gray-100'}`}>{children}</th>;
+        },
+        td({ children }) {
+          return <td className={`border px-2 py-1 ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>{children}</td>;
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
 }
 
 export default function App() {
@@ -150,6 +298,9 @@ export default function App() {
   const [showPrompts, setShowPrompts] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [deviceFingerprint] = useState(() => generateFingerprint());
+  const [dragOver, setDragOver] = useState(false);
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [editText, setEditText] = useState('');
 
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -201,7 +352,6 @@ export default function App() {
     if (token) { fetchChats(); fetchUser(); }
   }, [token]);
 
-  // ✅ FIX 2: Keep-alive - pinga o backend a cada 4 minutos pra não deixar dormir
   useEffect(() => {
     if (!token) return;
     const interval = setInterval(() => {
@@ -212,7 +362,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [token]);
 
-  // ✅ FIX 3: Pausa TTS quando usuário sai da aba
   useEffect(() => {
     const handleVisibility = () => {
       if (document.hidden && 'speechSynthesis' in window) {
@@ -228,7 +377,7 @@ export default function App() {
       const res = await fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data.success) setUser(data.user);
-    } catch { /* ignore */ }
+    } catch {}
   };
 
   const fetchChats = async () => {
@@ -343,6 +492,193 @@ export default function App() {
     a.click(); URL.revokeObjectURL(url);
   };
 
+  // ===== EDITAR MENSAGEM =====
+  const startEdit = (index) => {
+    if (messages[index]?.role !== 'user') return;
+    setEditingIndex(index);
+    setEditText(messages[index].content);
+  };
+
+  const cancelEdit = () => {
+    setEditingIndex(null);
+    setEditText('');
+  };
+
+  const saveEdit = async () => {
+    if (!editText.trim() || editingIndex === null || !activeChatId) return;
+    
+    try {
+      // Apaga mensagens a partir do índice (inclusive a mensagem editada)
+      const res = await fetch(`${API_URL}/api/chats/${activeChatId}/messages/${editingIndex}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+
+      setMessages(data.messages);
+      setEditingIndex(null);
+      setEditText('');
+      
+      // Reenvia a mensagem editada
+      await sendMessage(editText.trim(), data.messages);
+    } catch (err) {
+      setError(err.message || t.errorConnection);
+    }
+  };
+
+  // ===== REFAZER RESPOSTA =====
+  const regenerate = async (assistantIndex) => {
+    // Encontra a última mensagem do usuário antes dessa resposta
+    let userIndex = -1;
+    for (let i = assistantIndex - 1; i >= 0; i--) {
+      if (messages[i]?.role === 'user') {
+        userIndex = i;
+        break;
+      }
+    }
+    if (userIndex === -1) return;
+
+    const userMsg = messages[userIndex].content;
+    
+    try {
+      // Apaga a resposta da IA e tudo depois
+      const res = await fetch(`${API_URL}/api/chats/${activeChatId}/messages/${assistantIndex}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+
+      setMessages(data.messages);
+      await sendMessage(userMsg, data.messages, true);
+    } catch (err) {
+      setError(err.message || t.errorConnection);
+    }
+  };
+
+  // ===== GERAR IMAGEM =====
+  const generateImage = async () => {
+    if (!input.trim()) return;
+    const prompt = input.trim();
+    
+    let chatId = activeChatId;
+    if (!chatId) {
+      chatId = await createChat();
+      if (!chatId) return;
+    }
+
+    setMessages(prev => [...prev, { role: 'user', content: `/imagem: ${prompt}` }]);
+    setInput('');
+    setLoading(true);
+
+    try {
+      const res = await fetch(`${API_URL}/api/image?prompt=${encodeURIComponent(prompt)}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: `Aqui está a imagem que você pediu: **${prompt}**`,
+        imageUrl: data.url,
+        model: 'Pollinations AI'
+      }]);
+      
+      // Salva no backend
+      await fetch(`${API_URL}/api/chats/${chatId}/message`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ 
+          message: `Gerar imagem: ${prompt}\n![imagem](${data.url})` 
+        }),
+      });
+      
+      playSound('receive');
+      fetchChats();
+    } catch (err) {
+      setError(err.message || t.errorConnection);
+      playSound('error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ===== BUSCAR NA WEB =====
+  const searchWeb = async () => {
+    if (!input.trim()) return;
+    const query = input.trim();
+    
+    let chatId = activeChatId;
+    if (!chatId) {
+      chatId = await createChat();
+      if (!chatId) return;
+    }
+
+    setMessages(prev => [...prev, { role: 'user', content: `/buscar: ${query}` }]);
+    setInput('');
+    setLoading(true);
+
+    try {
+      const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+
+      const searchResults = data.results || [];
+      let content = `🔍 **Resultados da busca por:** "${query}"\n\n`;
+      
+      if (searchResults.length === 0) {
+        content += 'Nenhum resultado encontrado.';
+      } else {
+        searchResults.forEach((r, i) => {
+          content += `${i + 1}. **[${r.title}](${r.url})**\n   ${r.snippet || ''}\n\n`;
+        });
+      }
+
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content,
+        searchResults,
+        model: 'Web Search'
+      }]);
+      
+      playSound('receive');
+      fetchChats();
+    } catch (err) {
+      setError(err.message || t.errorConnection);
+      playSound('error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendMessage = async (text, customMessages = null, skipAddUser = false) => {
+    const currentMessages = customMessages || messages;
+    const chatId = activeChatId;
+    if (!chatId) return;
+
+    if (!skipAddUser) {
+      setMessages(prev => [...prev, { role: 'user', content: text }]);
+    }
+    setLoading(true);
+
+    try {
+      if (streamingEnabled) {
+        await handleStream(chatId, text, currentMessages);
+      } else {
+        await handleNormal(chatId, text, currentMessages);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || t.errorConnection);
+      playSound('error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSend = async () => {
     if (!input.trim() || loading) return;
     const text = input.trim();
@@ -354,24 +690,11 @@ export default function App() {
       if (!chatId) return;
     }
 
-    setMessages(prev => [...prev, { role: 'user', content: text }]);
-    setLoading(true);
-
-    try {
-      if (streamingEnabled) {
-        await handleStream(chatId, text);
-      } else {
-        await handleNormal(chatId, text);
-      }
-    } catch (err) {
-      console.error(err);
-      setError(err.message || t.errorConnection);
-    } finally {
-      setLoading(false);
-    }
+    playSound('send');
+    await sendMessage(text);
   };
 
-  const handleNormal = async (chatId, text) => {
+  const handleNormal = async (chatId, text, currentMessages) => {
     const res = await fetch(`${API_URL}/api/chats/${chatId}/message`, {
       method: 'POST',
       headers: {
@@ -384,16 +707,22 @@ export default function App() {
     const data = await res.json();
     if (!data.success) throw new Error(data.error || t.errorConnection);
 
-    setMessages(prev => [...prev, { role: 'assistant', content: data.data }]);
+    setMessages(prev => [...prev, { 
+      role: 'assistant', 
+      content: data.data,
+      thinking: data.thinking,
+      model: data.model
+    }]);
+    
     if (notifications && 'Notification' in window && Notification.permission === 'granted') {
       new Notification('StrawField AI', { body: 'Nova resposta recebida!', icon: '/favicon.ico' });
     }
     if (ttsEnabled) speak(data.data);
+    playSound('receive');
     fetchChats();
   };
 
-  // ✅ FIX 1: Streaming corrigido - não cria mensagens vazias
-  const handleStream = async (chatId, text) => {
+  const handleStream = async (chatId, text, currentMessages) => {
     const res = await fetch(`${API_URL}/api/chats/${chatId}/message/stream`, {
       method: 'POST',
       headers: {
@@ -407,8 +736,10 @@ export default function App() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let fullText = '';
+    let fullThinking = '';
     let buffer = '';
-    let hasAddedMessage = false; // ✅ Não cria mensagem vazia antes do primeiro chunk
+    let hasAddedMessage = false;
+    let currentModel = '';
 
     while (true) {
       const { done, value } = await reader.read();
@@ -424,22 +755,51 @@ export default function App() {
           if (data === '[DONE]') continue;
           try {
             const parsed = JSON.parse(data);
+            
+            if (parsed.thinking) {
+              fullThinking += parsed.thinking;
+              setMessages(prev => {
+                if (!hasAddedMessage) return prev;
+                const newMessages = [...prev];
+                const last = newMessages[newMessages.length - 1];
+                if (last?.role === 'assistant') {
+                  newMessages[newMessages.length - 1] = { ...last, thinking: fullThinking };
+                }
+                return newMessages;
+              });
+            }
+            
             if (parsed.content) {
               fullText += parsed.content;
-              // ✅ Só adiciona a mensagem quando tiver o primeiro conteúdo
               if (!hasAddedMessage) {
                 hasAddedMessage = true;
-                setMessages(prev => [...prev, { role: 'assistant', content: fullText }]);
+                setMessages(prev => [...prev, { role: 'assistant', content: fullText, thinking: fullThinking || undefined }]);
               } else {
                 setMessages(prev => {
                   const newMessages = [...prev];
-                  newMessages[newMessages.length - 1] = { role: 'assistant', content: fullText };
+                  newMessages[newMessages.length - 1] = { 
+                    ...newMessages[newMessages.length - 1], 
+                    content: fullText,
+                    thinking: fullThinking || undefined
+                  };
                   return newMessages;
                 });
               }
             }
+            
+            if (parsed.model) {
+              currentModel = parsed.model;
+              setMessages(prev => {
+                const newMessages = [...prev];
+                if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+                  newMessages[newMessages.length - 1] = { ...newMessages[newMessages.length - 1], model: parsed.model };
+                }
+                return newMessages;
+              });
+            }
+            
             if (parsed.error) throw new Error(parsed.error);
-          } catch { /* ignore parse errors */ }
+          } catch {}
         }
       }
     }
@@ -448,6 +808,7 @@ export default function App() {
       new Notification('StrawField AI', { body: 'Nova resposta recebida!', icon: '/favicon.ico' });
     }
     if (ttsEnabled && fullText) speak(fullText);
+    playSound('receive');
     fetchChats();
   };
 
@@ -472,6 +833,41 @@ export default function App() {
       }
       setChats([]); setActiveChatId(null); setMessages([]);
     } catch { setError(t.errorConnection); }
+  };
+
+  // ===== DRAG & DROP =====
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    setDragOver(false);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    
+    const files = e.dataTransfer.files;
+    if (files.length === 0) return;
+
+    const file = files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${API_URL}/api/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.success) {
+        setInput(prev => prev + (prev ? '\n' : '') + `[Arquivo: ${data.filename}](${API_URL}${data.path})`);
+      }
+    } catch {
+      setError('Erro ao fazer upload do arquivo.');
+    }
   };
 
   if (!token) {
@@ -556,7 +952,22 @@ export default function App() {
   }
 
   return (
-    <div className={`flex h-screen w-full overflow-hidden ${darkMode ? 'bg-gray-900 text-white' : 'bg-gray-50 text-gray-900'}`}>
+    <div 
+      className={`flex h-screen w-full overflow-hidden ${darkMode ? 'bg-gray-900 text-white' : 'bg-gray-50 text-gray-900'} ${dragOver ? 'ring-4 ring-pink-500 ring-inset' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {dragOver && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="bg-gray-800 border-2 border-dashed border-pink-500 rounded-2xl p-8 text-center">
+            <ImageIcon className="w-12 h-12 text-pink-400 mx-auto mb-2" />
+            <p className="text-white font-bold text-lg">{t.dropFile}</p>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed md:static md:translate-x-0 z-30 w-72 h-full ${darkMode ? 'bg-gray-800 border-r border-gray-700' : 'bg-white border-r border-gray-200'} flex flex-col transition-transform duration-300`}>
         <div className="p-4 border-b border-gray-700/50 flex items-center justify-between">
@@ -680,22 +1091,79 @@ export default function App() {
               <p className={`max-w-md ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                 Escolha um agente na sidebar ou comece a digitar. A StrawField está pronta para ajudar!
               </p>
+              <div className={`mt-4 text-xs ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
+                💡 Dica: Use <span className="font-mono bg-gray-700 px-1 rounded">/imagem</span> para gerar imagens ou <span className="font-mono bg-gray-700 px-1 rounded">/buscar</span> para pesquisar
+              </div>
             </div>
           ) : (
             messages.map((msg, i) => (
-              <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+              <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''} group`}>
                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? (darkMode ? 'bg-gray-700' : 'bg-gray-200') : theme.bgSoft}`}>
                   {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className={`w-4 h-4 ${theme.accent}`} />}
                 </div>
-                <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${msg.role === 'user' ? (darkMode ? 'bg-gray-700 text-white' : 'bg-gray-900 text-white') : (darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200')}`}>
-                  <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
-                  {msg.role === 'assistant' && (
-                    <div className="flex items-center gap-1 mt-2 opacity-0 hover:opacity-100 transition-opacity">
-                      <button onClick={() => speak(msg.content)} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}>
-                        <Volume2 className="w-3.5 h-3.5" />
-                      </button>
+                <div className={`max-w-[80%] rounded-2xl px-4 py-3 relative ${msg.role === 'user' ? (darkMode ? 'bg-gray-700 text-white' : 'bg-gray-900 text-white') : (darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200')}`}>
+                  {/* Badge do modelo */}
+                  {msg.model && (
+                    <div className={`text-[10px] mb-1 opacity-60 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      {t.modelLabel}: {msg.model}
                     </div>
                   )}
+                  
+                  {/* Thinking box */}
+                  {msg.thinking && (
+                    <div className={`mb-2 rounded-lg p-2 text-xs ${darkMode ? 'bg-gray-900/50 border border-gray-700' : 'bg-gray-50 border border-gray-200'}`}>
+                      <details>
+                        <summary className={`cursor-pointer font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{t.thinkingLabel}</summary>
+                        <div className={`mt-1 whitespace-pre-wrap ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>{msg.thinking}</div>
+                      </details>
+                    </div>
+                  )}
+                  
+                  {/* Image */}
+                  {msg.imageUrl && (
+                    <div className="mb-2">
+                      <img src={msg.imageUrl} alt="Generated" className="rounded-lg max-w-full max-h-64 object-contain" loading="lazy" />
+                    </div>
+                  )}
+                  
+                  {/* Content */}
+                  {editingIndex === i ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editText}
+                        onChange={e => setEditText(e.target.value)}
+                        className={`w-full p-2 rounded-lg text-sm ${darkMode ? 'bg-gray-800 text-white border-gray-600' : 'bg-white text-gray-900 border-gray-300'} border`}
+                        rows={3}
+                      />
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={cancelEdit} className="px-2 py-1 rounded text-xs bg-gray-600 text-white">Cancelar</button>
+                        <button onClick={saveEdit} className="px-2 py-1 rounded text-xs bg-pink-500 text-white">Salvar</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm leading-relaxed">
+                      <MarkdownRenderer content={msg.content} darkMode={darkMode} />
+                    </div>
+                  )}
+                  
+                  {/* Actions */}
+                  <div className={`flex items-center gap-1 mt-2 ${msg.role === 'user' ? 'justify-start' : 'justify-end'} opacity-0 group-hover:opacity-100 transition-opacity`}>
+                    {msg.role === 'user' && editingIndex !== i && (
+                      <button onClick={() => startEdit(i)} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-600 text-gray-400' : 'hover:bg-gray-200 text-gray-500'}`} title={t.edit}>
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    {msg.role === 'assistant' && (
+                      <>
+                        <button onClick={() => speak(msg.content)} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`} title="TTS">
+                          <Volume2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => regenerate(i)} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`} title={t.regenerate}>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             ))
@@ -737,16 +1205,34 @@ export default function App() {
               className={`flex-1 resize-none bg-transparent px-3 py-2 text-sm focus:outline-none max-h-32 ${darkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'}`}
               style={{ minHeight: '40px' }}
             />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || loading}
-              className={`p-2.5 rounded-xl transition-all ${input.trim() && !loading ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white hover:opacity-90' : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'}`}
-            >
-              <Send className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={searchWeb}
+                disabled={!input.trim() || loading}
+                className={`p-2 rounded-lg transition-colors ${input.trim() && !loading ? 'text-blue-400 hover:bg-blue-500/10' : 'text-gray-400 cursor-not-allowed'}`}
+                title={t.searchWeb}
+              >
+                <Search className="w-4 h-4" />
+              </button>
+              <button
+                onClick={generateImage}
+                disabled={!input.trim() || loading}
+                className={`p-2 rounded-lg transition-colors ${input.trim() && !loading ? 'text-purple-400 hover:bg-purple-500/10' : 'text-gray-400 cursor-not-allowed'}`}
+                title={t.generateImage}
+              >
+                <ImageIcon className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || loading}
+                className={`p-2.5 rounded-xl transition-all ${input.trim() && !loading ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white hover:opacity-90' : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'}`}
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
           </div>
           <div className={`text-center text-xs mt-2 ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
-            Pressione Ctrl+Enter para enviar · Ctrl+N para novo chat
+            Pressione Ctrl+Enter para enviar · Ctrl+N para novo chat · Arraste arquivos para upload
           </div>
         </div>
       </div>
