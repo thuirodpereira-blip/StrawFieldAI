@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus, MessageSquare, LogOut, Ghost, Sparkles, Menu, X, Volume2, VolumeX, Download, Bell, BellOff, Settings as SettingsIcon, Heart, Code, BookOpen, Atom, Palette, Globe, Cpu, Check, ArrowLeft, Shield, Zap, Edit3, RefreshCw, Image as ImageIcon, Search, Copy, CheckCircle, XCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus, MessageSquare, LogOut, Ghost, Sparkles, Menu, X, Volume2, VolumeX, Download, Bell, BellOff, Settings as SettingsIcon, Heart, Code, BookOpen, Atom, Palette, Globe, Cpu, Check, ArrowLeft, Shield, Zap, Edit3, RefreshCw, Search, Copy, CheckCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -52,7 +52,6 @@ const TRANSLATIONS = {
     regenerate: 'Refazer',
     dropFile: 'Solte o arquivo aqui',
     searchWeb: 'Buscar na web',
-    generateImage: 'Gerar imagem',
   },
   en: {
     welcome: 'Welcome to StrawField AI',
@@ -86,7 +85,6 @@ const TRANSLATIONS = {
     regenerate: 'Regenerate',
     dropFile: 'Drop file here',
     searchWeb: 'Search web',
-    generateImage: 'Generate image',
   },
   es: {
     welcome: 'Bienvenido a StrawField AI',
@@ -120,7 +118,6 @@ const TRANSLATIONS = {
     regenerate: 'Rehacer',
     dropFile: 'Suelta el archivo aquí',
     searchWeb: 'Buscar en la web',
-    generateImage: 'Generar imagen',
   },
 };
 
@@ -149,7 +146,6 @@ function generateFingerprint() {
   return 'fp_' + Math.abs(hash).toString(16);
 }
 
-// ===== SOUND EFFECTS =====
 function playSound(type) {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -179,15 +175,32 @@ function playSound(type) {
   } catch {}
 }
 
-// ===== MARKDOWN RENDERER =====
+function toSafeString(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(toSafeString).join('');
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '[Object]';
+    }
+  }
+  return String(value);
+}
+
 function CodeBlock({ language, children }) {
   const [copied, setCopied] = useState(false);
   
   const handleCopy = () => {
-    navigator.clipboard.writeText(children);
+    const text = toSafeString(children);
+    navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const displayText = toSafeString(children);
 
   return (
     <div className="relative group my-2">
@@ -201,13 +214,17 @@ function CodeBlock({ language, children }) {
         </button>
       </div>
       <pre className="bg-gray-900 p-3 rounded-b-lg overflow-x-auto">
-        <code className="text-sm">{children}</code>
+        <code className="text-sm">{displayText}</code>
       </pre>
     </div>
   );
 }
 
 function MarkdownRenderer({ content, darkMode }) {
+  const safeContent = toSafeString(content);
+  
+  if (!safeContent) return null;
+
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -215,8 +232,10 @@ function MarkdownRenderer({ content, darkMode }) {
       components={{
         code({ node, inline, className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || '');
+          const codeString = toSafeString(children);
+          
           return !inline && match ? (
-            <CodeBlock language={match[1]}>{String(children).replace(/\n$/, '')}</CodeBlock>
+            <CodeBlock language={match[1]}>{codeString}</CodeBlock>
           ) : (
             <code className={`px-1.5 py-0.5 rounded text-sm ${darkMode ? 'bg-gray-700 text-pink-300' : 'bg-gray-200 text-pink-600'}`} {...props}>
               {children}
@@ -261,7 +280,7 @@ function MarkdownRenderer({ content, darkMode }) {
         },
       }}
     >
-      {content}
+      {safeContent}
     </ReactMarkdown>
   );
 }
@@ -484,7 +503,7 @@ export default function App() {
 
   const exportChat = () => {
     if (!messages.length) return;
-    const text = messages.map(m => `${m.role === 'user' ? 'Você' : 'StrawField'}: ${m.content}`).join('\n\n---\n\n');
+    const text = messages.map(m => `${m.role === 'user' ? 'Você' : 'StrawField'}: ${toSafeString(m.content)}`).join('\n\n---\n\n');
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -492,11 +511,10 @@ export default function App() {
     a.click(); URL.revokeObjectURL(url);
   };
 
-  // ===== EDITAR MENSAGEM =====
   const startEdit = (index) => {
     if (messages[index]?.role !== 'user') return;
     setEditingIndex(index);
-    setEditText(messages[index].content);
+    setEditText(toSafeString(messages[index].content));
   };
 
   const cancelEdit = () => {
@@ -508,7 +526,6 @@ export default function App() {
     if (!editText.trim() || editingIndex === null || !activeChatId) return;
     
     try {
-      // Apaga mensagens a partir do índice (inclusive a mensagem editada)
       const res = await fetch(`${API_URL}/api/chats/${activeChatId}/messages/${editingIndex}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
@@ -520,16 +537,13 @@ export default function App() {
       setEditingIndex(null);
       setEditText('');
       
-      // Reenvia a mensagem editada
       await sendMessage(editText.trim(), data.messages);
     } catch (err) {
       setError(err.message || t.errorConnection);
     }
   };
 
-  // ===== REFAZER RESPOSTA =====
   const regenerate = async (assistantIndex) => {
-    // Encontra a última mensagem do usuário antes dessa resposta
     let userIndex = -1;
     for (let i = assistantIndex - 1; i >= 0; i--) {
       if (messages[i]?.role === 'user') {
@@ -539,10 +553,9 @@ export default function App() {
     }
     if (userIndex === -1) return;
 
-    const userMsg = messages[userIndex].content;
+    const userMsg = toSafeString(messages[userIndex].content);
     
     try {
-      // Apaga a resposta da IA e tudo depois
       const res = await fetch(`${API_URL}/api/chats/${activeChatId}/messages/${assistantIndex}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
@@ -557,56 +570,6 @@ export default function App() {
     }
   };
 
-  // ===== GERAR IMAGEM =====
-  const generateImage = async () => {
-    if (!input.trim()) return;
-    const prompt = input.trim();
-    
-    let chatId = activeChatId;
-    if (!chatId) {
-      chatId = await createChat();
-      if (!chatId) return;
-    }
-
-    setMessages(prev => [...prev, { role: 'user', content: `/imagem: ${prompt}` }]);
-    setInput('');
-    setLoading(true);
-
-    try {
-      const res = await fetch(`${API_URL}/api/image?prompt=${encodeURIComponent(prompt)}`);
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error);
-
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: `Aqui está a imagem que você pediu: **${prompt}**`,
-        imageUrl: data.url,
-        model: 'Pollinations AI'
-      }]);
-      
-      // Salva no backend
-      await fetch(`${API_URL}/api/chats/${chatId}/message`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ 
-          message: `Gerar imagem: ${prompt}\n![imagem](${data.url})` 
-        }),
-      });
-      
-      playSound('receive');
-      fetchChats();
-    } catch (err) {
-      setError(err.message || t.errorConnection);
-      playSound('error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ===== BUSCAR NA WEB =====
   const searchWeb = async () => {
     if (!input.trim()) return;
     const query = input.trim();
@@ -799,7 +762,9 @@ export default function App() {
             }
             
             if (parsed.error) throw new Error(parsed.error);
-          } catch {}
+          } catch (e) {
+            // Ignora erros de parse
+          }
         }
       }
     }
@@ -835,7 +800,6 @@ export default function App() {
     } catch { setError(t.errorConnection); }
   };
 
-  // ===== DRAG & DROP =====
   const handleDragOver = (e) => {
     e.preventDefault();
     setDragOver(true);
@@ -958,11 +922,10 @@ export default function App() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Drag overlay */}
       {dragOver && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center pointer-events-none">
           <div className="bg-gray-800 border-2 border-dashed border-pink-500 rounded-2xl p-8 text-center">
-            <ImageIcon className="w-12 h-12 text-pink-400 mx-auto mb-2" />
+            <Search className="w-12 h-12 text-pink-400 mx-auto mb-2" />
             <p className="text-white font-bold text-lg">{t.dropFile}</p>
           </div>
         </div>
@@ -1092,7 +1055,7 @@ export default function App() {
                 Escolha um agente na sidebar ou comece a digitar. A StrawField está pronta para ajudar!
               </p>
               <div className={`mt-4 text-xs ${darkMode ? 'text-gray-600' : 'text-gray-400'}`}>
-                💡 Dica: Use <span className="font-mono bg-gray-700 px-1 rounded">/imagem</span> para gerar imagens ou <span className="font-mono bg-gray-700 px-1 rounded">/buscar</span> para pesquisar
+                💡 Dica: Use <span className="font-mono bg-gray-700 px-1 rounded">/buscar</span> para pesquisar na web
               </div>
             </div>
           ) : (
@@ -1119,14 +1082,7 @@ export default function App() {
                     </div>
                   )}
                   
-                  {/* Image */}
-                  {msg.imageUrl && (
-                    <div className="mb-2">
-                      <img src={msg.imageUrl} alt="Generated" className="rounded-lg max-w-full max-h-64 object-contain" loading="lazy" />
-                    </div>
-                  )}
-                  
-                  {/* Content */}
+                  {/* Content - SAFE RENDER */}
                   {editingIndex === i ? (
                     <div className="space-y-2">
                       <textarea
@@ -1142,7 +1098,11 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="text-sm leading-relaxed">
-                      <MarkdownRenderer content={msg.content} darkMode={darkMode} />
+                      {typeof msg.content === 'string' ? (
+                        <MarkdownRenderer content={msg.content} darkMode={darkMode} />
+                      ) : (
+                        <span className="text-red-400">[Erro: conteúdo inválido]</span>
+                      )}
                     </div>
                   )}
                   
@@ -1155,7 +1115,7 @@ export default function App() {
                     )}
                     {msg.role === 'assistant' && (
                       <>
-                        <button onClick={() => speak(msg.content)} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`} title="TTS">
+                        <button onClick={() => speak(toSafeString(msg.content))} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`} title="TTS">
                           <Volume2 className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={() => regenerate(i)} className={`p-1 rounded ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`} title={t.regenerate}>
@@ -1213,14 +1173,6 @@ export default function App() {
                 title={t.searchWeb}
               >
                 <Search className="w-4 h-4" />
-              </button>
-              <button
-                onClick={generateImage}
-                disabled={!input.trim() || loading}
-                className={`p-2 rounded-lg transition-colors ${input.trim() && !loading ? 'text-purple-400 hover:bg-purple-500/10' : 'text-gray-400 cursor-not-allowed'}`}
-                title={t.generateImage}
-              >
-                <ImageIcon className="w-4 h-4" />
               </button>
               <button
                 onClick={handleSend}
