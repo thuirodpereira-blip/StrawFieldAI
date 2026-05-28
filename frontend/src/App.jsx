@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus, MessageSquare, LogOut, Ghost, Sparkles, Menu, X, Volume2, VolumeX, Download, Bell, BellOff, Settings as SettingsIcon, Heart, Code, BookOpen, Atom, Palette, Globe, Cpu, Check, ArrowLeft, Shield, Upload, Keyboard, Zap } from 'lucide-react';
+import { Send, Trash2, Moon, Sun, Bot, User, AlertCircle, Plus, MessageSquare, LogOut, Ghost, Sparkles, Menu, X, Volume2, VolumeX, Download, Bell, BellOff, Settings as SettingsIcon, Heart, Code, BookOpen, Atom, Palette, Globe, Cpu, Check, ArrowLeft, Shield, Zap } from 'lucide-react';
 import Agents from './Agents';
 import Settings from './Settings';
 import Credits from './Credits';
@@ -96,7 +96,7 @@ const TRANSLATIONS = {
 const PROMPT_TEMPLATES = [
   { id: 'code', icon: Code, label: 'Código', prompt: 'Escreva um código em [linguagem] que [faça o quê]. Explique cada parte.' },
   { id: 'explain', icon: BookOpen, label: 'Explicar', prompt: 'Explique [tópico] como se eu tivesse 10 anos. Use analogias simples.' },
-  { id: 'debug', icon: Zap, label: 'Debugar', prompt: 'Analise este código e encontre o erro:\\n\\n```\\n[cole o código aqui]\\n```' },
+  { id: 'debug', icon: Zap, label: 'Debugar', prompt: 'Analise este código e encontre o erro:\n\n```\n[cole o código aqui]\n```' },
   { id: 'creative', icon: Sparkles, label: 'Criar', prompt: 'Crie uma [história/roteiro/ideia] sobre [tema]. Seja criativo!' },
   { id: 'study', icon: Atom, label: 'Estudar', prompt: 'Crie um resumo completo sobre [tema] com tópicos e exemplos.' },
 ];
@@ -200,6 +200,28 @@ export default function App() {
   useEffect(() => {
     if (token) { fetchChats(); fetchUser(); }
   }, [token]);
+
+  // ✅ FIX 2: Keep-alive - pinga o backend a cada 4 minutos pra não deixar dormir
+  useEffect(() => {
+    if (!token) return;
+    const interval = setInterval(() => {
+      fetch(`${API_URL}/api/health`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }, 4 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  // ✅ FIX 3: Pausa TTS quando usuário sai da aba
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
 
   const fetchUser = async () => {
     try {
@@ -370,6 +392,7 @@ export default function App() {
     fetchChats();
   };
 
+  // ✅ FIX 1: Streaming corrigido - não cria mensagens vazias
   const handleStream = async (chatId, text) => {
     const res = await fetch(`${API_URL}/api/chats/${chatId}/message/stream`, {
       method: 'POST',
@@ -385,8 +408,7 @@ export default function App() {
     const decoder = new TextDecoder();
     let fullText = '';
     let buffer = '';
-
-    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+    let hasAddedMessage = false; // ✅ Não cria mensagem vazia antes do primeiro chunk
 
     while (true) {
       const { done, value } = await reader.read();
@@ -404,11 +426,17 @@ export default function App() {
             const parsed = JSON.parse(data);
             if (parsed.content) {
               fullText += parsed.content;
-              setMessages(prev => {
-                const newMessages = [...prev];
-                newMessages[newMessages.length - 1] = { role: 'assistant', content: fullText };
-                return newMessages;
-              });
+              // ✅ Só adiciona a mensagem quando tiver o primeiro conteúdo
+              if (!hasAddedMessage) {
+                hasAddedMessage = true;
+                setMessages(prev => [...prev, { role: 'assistant', content: fullText }]);
+              } else {
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  newMessages[newMessages.length - 1] = { role: 'assistant', content: fullText };
+                  return newMessages;
+                });
+              }
             }
             if (parsed.error) throw new Error(parsed.error);
           } catch { /* ignore parse errors */ }
