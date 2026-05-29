@@ -716,6 +716,35 @@ Responda em português brasileiro.`;
   }
 };
 
+// ===== FUNÇÃO handleNormal (TAVA FALTANDO!) =====
+const handleNormal = async (chatId, text, currentMessages) => {
+  const res = await fetch(`${API_URL}/api/chats/${chatId}/message`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'X-Device-Fingerprint': deviceFingerprint,
+    },
+    body: JSON.stringify({ message: text, agent: currentAgent }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || t.errorConnection);
+
+  setMessages(prev => [...prev, { 
+    role: 'assistant', 
+    content: data.data,
+    thinking: data.thinking,
+    model: data.model
+  }]);
+  
+  if (notifications && 'Notification' in window && Notification.permission === 'granted') {
+    new Notification('StrawField AI', { body: 'Nova resposta recebida!', icon: '/favicon.ico' });
+  }
+  if (ttsEnabled) speak(data.data);
+  playSound('receive');
+  fetchChats();
+};
+
   const sendMessage = async (text, customMessages = null, skipAddUser = false) => {
     const currentMessages = customMessages || messages;
     const chatId = activeChatId;
