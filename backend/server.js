@@ -15,7 +15,6 @@ dotenv.config();
 
 const app = express();
 const DATA_DIR = path.join(process.cwd(), 'data');
-
 const upload = multer({ dest: path.join(DATA_DIR, 'uploads') });
 
 const SYSTEM_PROMPT = `Você é a StrawField, uma assistente de IA inteligente, criativa e com personalidade própria.
@@ -28,7 +27,7 @@ const SYSTEM_PROMPT = `Você é a StrawField, uma assistente de IA inteligente, 
 - Teste mentalmente o código antes de enviar.
 - Se não tiver certeza, diga "não sei" em vez de inventar.`;
 
-// ===== WAKE-UP ENDPOINT (pro keep-alive do frontend) =====
+// ===== WAKE-UP =====
 app.get('/api/wake', (req, res) => {
   res.json({ success: true, status: 'awake', timestamp: new Date().toISOString() });
 });
@@ -48,40 +47,47 @@ await fs.mkdir(DATA_DIR, { recursive: true });
 await fs.mkdir(path.join(DATA_DIR, 'uploads'), { recursive: true });
 
 async function readJson(file) {
-  try {
-    const raw = await fs.readFile(path.join(DATA_DIR, file), 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(await fs.readFile(path.join(DATA_DIR, file), 'utf-8')); }
+  catch { return {}; }
 }
 
 async function writeJson(file, data) {
   await fs.writeFile(path.join(DATA_DIR, file), JSON.stringify(data, null, 2), 'utf-8');
 }
 
-const deepseek = (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY.trim() !== '')
-  ? new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/v1' })
-  : null;
+// ===== INICIALIZA APENAS AS 3 MELHORES APIs =====
+const providers = {};
 
-const openrouter = (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.trim() !== '')
-  ? new OpenAI({
-      apiKey: process.env.OPENROUTER_API_KEY,
-      baseURL: 'https://openrouter.ai/api/v1',
-      defaultHeaders: {
-        'HTTP-Referer': process.env.FRONTEND_URL || 'https://strawfield.vercel.app',
-        'X-Title': 'StrawField AI',
-      },
-    })
-  : null;
+// 1. GEMINI 2.5 PRO (PRIORIDADE MÁXIMA - MAIS INTELIGENTE)
+if (process.env.GEMINI_API_KEY?.trim()) {
+  providers.gemini = new OpenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai'
+  });
+  console.log('✅ Gemini 2.5 Pro carregado');
+}
 
-const groq = (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim() !== '')
-  ? new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' })
-  : null;
+// 2. OPENROUTER - LLAMA 4 MAVERICK FREE (SEGUNDA MELHOR)
+if (process.env.OPENROUTER_API_KEY?.trim()) {
+  providers.openrouter = new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+    defaultHeaders: {
+      'HTTP-Referer': process.env.FRONTEND_URL || 'https://strawfield.vercel.app',
+      'X-Title': 'StrawField AI',
+    },
+  });
+  console.log('✅ OpenRouter (Llama 4) carregado');
+}
 
-const gemini = (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '')
-  ? new OpenAI({ apiKey: process.env.GEMINI_API_KEY, baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai' })
-  : null;
+// 3. GROQ - LLAMA 3.3 70B (RÁPIDO, TERCEIRA OPÇÃO)
+if (process.env.GROQ_API_KEY?.trim()) {
+  providers.groq = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: 'https://api.groq.com/openai/v1'
+  });
+  console.log('✅ Groq (Llama 3.3 70B) carregado');
+}
 
 const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
 
@@ -121,162 +127,113 @@ function moderate(text) {
 
 const SAFE_FALLBACK = 'Prefiro manter nossa conversa no respeito. Estou aqui para ajudar de forma construtiva. O que você precisa?';
 
-// ===== CHAMADA ÀS IAs COM FALLBACK MAIS FORTE =====
-async function callAI(messages, modelPreference = 'deepseek') {
+// ===== CONFIGURAÇÃO DOS 3 PROVIDERS =====
+const PROVIDER_CONFIG = {
+  gemini: {
+    name: 'Gemini 2.5 Pro',
+    model: 'gemini-2.5-pro-preview-03-25', // MODELO MAIS INTELIGENTE DA GOOGLE
+    priority: 1,
+    client: providers.gemini
+  },
+  openrouter: {
+    name: 'Llama 4 Maverick',
+    model: 'meta-llama/llama-4-maverick:free', // LLAMA 4 FREE!
+    priority: 2,
+    client: providers.openrouter
+  },
+  groq: {
+    name: 'Llama 3.3 70B',
+    model: 'llama-3.3-70b-versatile',
+    priority: 3,
+    client: providers.groq
+  }
+};
+
+// Ordena por prioridade (inteligência)
+const sortedProviders = Object.entries(PROVIDER_CONFIG)
+  .filter(([_, config]) => config.client)
+  .sort((a, b) => a[1].priority - b[1].priority);
+
+console.log(`📊 Providers ativos: ${sortedProviders.map(([k]) => k).join(', ') || 'NENHUM'}`);
+
+// ===== CHAMADA ÀS IAs COM FALLBACK INTELIGENTE =====
+async function callAI(messages) {
   const errors = [];
-  const providers = [];
-
-  // Ordem: Gemini (mais barato) → OpenRouter (free) → DeepSeek → Groq → Ollama
-  // Groq vai pro FINAL porque tá no rate limit!
-
-  if (gemini) {
-    providers.push(async () => {
-      const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-      const c = await gemini.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096,
+  
+  for (const [key, config] of sortedProviders) {
+    try {
+      console.log(`🔄 Tentando ${config.name}...`);
+      const c = await config.client.chat.completions.create({
+        model: config.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 4096,
       });
-      return { content: c.choices[0]?.message?.content, thinking: null, model: 'Gemini' };
-    });
-  }
-
-  if (openrouter) {
-    providers.push(async () => {
-      const model = process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free';
-      const c = await openrouter.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096,
-      });
-      let content = c.choices[0]?.message?.content || '';
-      let thinking = null;
       
-      if (content.includes('<think>')) {
-        const thinkMatch = content.match(/<<<think>([\s\S]*?)<<\/think>/);
-        if (thinkMatch) {
-          thinking = thinkMatch[1].trim();
-          content = content.replace(/<<<think>[\s\S]*?<\/think>/, '').trim();
-        }
-      }
-      
-      return { content, thinking, model: 'OpenRouter' };
-    });
-  }
-
-  if (deepseek) {
-    providers.push(async () => {
-      const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-      const c = await deepseek.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096,
-      });
       const msg = c.choices[0]?.message;
       let content = msg?.content || '';
       let thinking = msg?.reasoning_content || null;
       
+      // Parse thinking tags
       if (!thinking && content.includes('<think>')) {
-        const thinkMatch = content.match(/<<<think>([\s\S]*?)<<\/think>/);
+        const thinkMatch = content.match(/<<think>([\s\S]*?)<<\/think>/);
         if (thinkMatch) {
           thinking = thinkMatch[1].trim();
-          content = content.replace(/<<<think>[\s\S]*?<\/think>/, '').trim();
+          content = content.replace(/<<think>[\s\S]*?<\/think>/, '').trim();
         }
       }
       
-      return { content, thinking, model: 'DeepSeek' };
-    });
+      console.log(`✅ ${config.name} respondeu!`);
+      return { content, thinking, model: config.name };
+      
+    } catch (e) {
+      console.warn(`❌ ${config.name} falhou: ${e.message}`);
+      errors.push(`${config.name}: ${e.message}`);
+      
+      // Se for rate limit, quota ou erro de conexão, continua pro próximo
+      if (e.message.includes('rate') || e.message.includes('429') || 
+          e.message.includes('quota') || e.message.includes('limit') ||
+          e.message.includes('ECONNREFUSED') || e.message.includes('fetch')) {
+        continue;
+      }
+    }
   }
-
-  // Groq vai pro FINAL (rate limit)
-  if (groq) {
-    providers.push(async () => {
-      const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-      const c = await groq.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096,
-      });
-      return { content: c.choices[0]?.message?.content, thinking: null, model: 'Groq' };
-    });
-  }
-
-  providers.push(async () => {
+  
+  // Fallback final: Ollama local
+  try {
+    console.log('🔄 Tentando Ollama local...');
     const res = await fetch(`${ollamaUrl}/api/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: process.env.OLLAMA_MODEL || 'llama3.2', messages, stream: false }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        model: process.env.OLLAMA_MODEL || 'llama3.2', 
+        messages, 
+        stream: false 
+      }),
     });
     if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
     const data = await res.json();
-    return { content: data.message?.content, thinking: null, model: 'Ollama' };
-  });
-
-  for (const provider of providers) {
-    try {
-      const result = await provider();
-      if (result.content) return result;
-    } catch (e) {
-      errors.push(e.message);
-      if (e.message.includes('rate_limit') || e.message.includes('429') || e.message.includes('too many') || e.message.includes('Limit')) {
-        console.warn(`[RATE LIMIT] ${e.message}, tentando próximo...`);
-        continue;
-      }
-      if (provider === providers[providers.length - 1]) throw e;
-    }
+    return { content: data.message?.content, thinking: null, model: 'Ollama Local' };
+  } catch (e) {
+    errors.push(`Ollama: ${e.message}`);
   }
 
-  throw new Error(`Nenhum provedor disponível.\n${errors.join('\n')}`);
+  throw new Error(`❌ TODAS as IAs falharam!\n${errors.join('\n')}`);
 }
 
-// ===== STREAMING COM FALLBACK REORDENADO =====
+// ===== STREAMING COM FALLBACK =====
 async function callAIStream(messages, res) {
-  const providers = [];
-
-  // Gemini primeiro (mais estável)
-  if (gemini) {
-    providers.push(async () => {
-      const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-      const stream = await gemini.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
+  for (const [key, config] of sortedProviders) {
+    try {
+      console.log(`🔄 Streaming com ${config.name}...`);
+      const stream = await config.client.chat.completions.create({
+        model: config.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 4096,
+        stream: true,
       });
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content;
-        if (content) res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
-      }
-      res.write('data: [DONE]\\n\\n');
-    });
-  }
-
-  if (openrouter) {
-    providers.push(async () => {
-      const model = process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free';
-      const stream = await openrouter.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
-      });
-      let buffer = '';
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        buffer += content;
-        
-        if (buffer.includes('<think>')) {
-          const thinkStart = buffer.indexOf('<think>');
-          const thinkEnd = buffer.indexOf('<think>');
-          if (thinkStart !== -1 && thinkEnd !== -1) {
-            const think = buffer.slice(thinkStart + 7, thinkEnd);
-            res.write(`data: ${JSON.stringify({ thinking: think })}\\n\\n`);
-            buffer = buffer.slice(thinkEnd + 8);
-          }
-        }
-        
-        if (buffer && !buffer.includes('<think>')) {
-          res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
-          buffer = '';
-        }
-      }
-      if (buffer) res.write(`data: ${JSON.stringify({ content: buffer })}\\n\\n`);
-      res.write('data: [DONE]\\n\\n');
-    });
-  }
-
-  if (deepseek) {
-    providers.push(async () => {
-      const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-      const stream = await deepseek.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
-      });
-      let inThink = false;
+      
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
         const content = delta?.content || '';
@@ -289,36 +246,21 @@ async function callAIStream(messages, res) {
           res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
         }
       }
+      
       res.write('data: [DONE]\\n\\n');
-    });
-  }
-
-  // Groq por último
-  if (groq) {
-    providers.push(async () => {
-      const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-      const stream = await groq.chat.completions.create({
-        model, messages, temperature: 0.7, max_tokens: 4096, stream: true,
-      });
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content;
-        if (content) res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
-      }
-      res.write('data: [DONE]\\n\\n');
-    });
-  }
-
-  for (const provider of providers) {
-    try {
-      await provider();
+      console.log(`✅ ${config.name} streaming OK!`);
       return;
+      
     } catch (e) {
-      console.warn(`[STREAM ERROR] ${e.message}, tentando próximo...`);
-      continue;
+      console.warn(`❌ ${config.name} streaming falhou: ${e.message}`);
+      if (e.message.includes('rate') || e.message.includes('429') || 
+          e.message.includes('quota') || e.message.includes('ECONNREFUSED')) {
+        continue;
+      }
     }
   }
-
-  res.write(`data: ${JSON.stringify({ error: 'Todos os provedores falharam.' })}\\n\\n`);
+  
+  res.write(`data: ${JSON.stringify({ error: 'Todas as IAs falharam no streaming.' })}\\n\\n`);
 }
 
 // ===== AUTH ROUTES =====
@@ -451,7 +393,6 @@ app.delete('/api/chats/:id', async (req, res) => {
   res.json({ success: true, message: 'Chat deletado.' });
 });
 
-// ===== DELETE MESSAGES FROM INDEX =====
 app.delete('/api/chats/:id/messages/:index', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ success: false, error: 'Não autenticado.' });
@@ -512,87 +453,75 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
   chat.messages.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
 
   const history = chat.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
-  const systemPrompt = SYSTEM_PROMPT;
-  const messages = [{ role: 'system', content: systemPrompt }, ...history];
+  const messages = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
 
   try {
     let fullResponse = '';
     let fullThinking = '';
     let modelUsed = '';
 
-    const streamResp = await new Promise((resolve, reject) => {
-      if (gemini) {
-        gemini.chat.completions.create({
-          model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
-          messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        }).then(s => resolve({ stream: s, model: 'Gemini' })).catch(reject);
-      } else if (openrouter) {
-        openrouter.chat.completions.create({
-          model: process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free',
-          messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        }).then(s => resolve({ stream: s, model: 'OpenRouter' })).catch(reject);
-      } else if (deepseek) {
-        deepseek.chat.completions.create({
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-          messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        }).then(s => resolve({ stream: s, model: 'DeepSeek' })).catch(reject);
-      } else if (groq) {
-        groq.chat.completions.create({
-          model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-          messages, temperature: 0.7, max_tokens: 4096, stream: true,
-        }).then(s => resolve({ stream: s, model: 'Groq' })).catch(reject);
-      } else {
-        reject(new Error('Nenhum provedor de streaming disponível'));
-      }
-    });
+    for (const [key, config] of sortedProviders) {
+      try {
+        const stream = await config.client.chat.completions.create({
+          model: config.model,
+          messages,
+          temperature: 0.7,
+          max_tokens: 4096,
+          stream: true,
+        });
+        
+        modelUsed = config.name;
+        let thinkBuffer = '';
 
-    const { stream, model } = streamResp;
-    modelUsed = model;
-    let thinkBuffer = '';
-
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      const content = delta?.content || '';
-      const reasoning = delta?.reasoning_content || '';
-      
-      if (reasoning) {
-        fullThinking += reasoning;
-        res.write(`data: ${JSON.stringify({ thinking: reasoning })}\\n\\n`);
-      }
-      
-      if (content.includes('<think>') || thinkBuffer) {
-        thinkBuffer += content;
-        if (thinkBuffer.includes('<think>')) {
-          const match = thinkBuffer.match(/<<<think>([\s\S]*?)<<\/think>/);
-          if (match) {
-            fullThinking += match[1];
-            res.write(`data: ${JSON.stringify({ thinking: match[1] })}\\n\\n`);
-            const after = thinkBuffer.replace(/<<<think>[\s\S]*?<\/think>/, '');
-            if (after) {
-              fullResponse += after;
-              res.write(`data: ${JSON.stringify({ content: after })}\\n\\n`);
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta;
+          const content = delta?.content || '';
+          const reasoning = delta?.reasoning_content || '';
+          
+          if (reasoning) {
+            fullThinking += reasoning;
+            res.write(`data: ${JSON.stringify({ thinking: reasoning })}\\n\\n`);
+          }
+          
+          if (content.includes('<think>') || thinkBuffer) {
+            thinkBuffer += content;
+            if (thinkBuffer.includes('</think>')) {
+              const match = thinkBuffer.match(/<<think>([\s\S]*?)<<\/think>/);
+              if (match) {
+                fullThinking += match[1];
+                res.write(`data: ${JSON.stringify({ thinking: match[1] })}\\n\\n`);
+                const after = thinkBuffer.replace(/<<think>[\s\S]*?<\/think>/, '');
+                if (after) {
+                  fullResponse += after;
+                  res.write(`data: ${JSON.stringify({ content: after })}\\n\\n`);
+                }
+                thinkBuffer = '';
+                continue;
+              }
             }
-            thinkBuffer = '';
+            if (thinkBuffer.length > 10000) {
+              fullResponse += thinkBuffer;
+              res.write(`data: ${JSON.stringify({ content: thinkBuffer })}\\n\\n`);
+              thinkBuffer = '';
+            }
             continue;
           }
+          
+          if (content) {
+            fullResponse += content;
+            res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+          }
         }
-        if (thinkBuffer.length > 10000) {
-          fullResponse += thinkBuffer;
-          res.write(`data: ${JSON.stringify({ content: thinkBuffer })}\\n\\n`);
-          thinkBuffer = '';
-        }
+        
+        break; // Sai do loop se deu certo
+        
+      } catch (e) {
+        console.warn(`❌ ${config.name} streaming falhou: ${e.message}`);
         continue;
-      }
-      
-      if (content) {
-        fullResponse += content;
-        res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
       }
     }
 
-    if (thinkBuffer) {
-      fullResponse += thinkBuffer;
-    }
+    if (thinkBuffer) fullResponse += thinkBuffer;
 
     res.write('data: [DONE]\\n\\n');
     res.write(`data: ${JSON.stringify({ model: modelUsed })}\\n\\n`);
@@ -678,7 +607,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
 app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));
 
-// ===== WEB SEARCH (FIXED — AGORA EXPLICA OS RESULTADOS) =====
+// ===== WEB SEARCH =====
 app.get('/api/search', async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ success: false, error: 'Query obrigatória.' });
@@ -720,29 +649,12 @@ app.get('/api/search', async (req, res) => {
       i++;
     }
 
-    const filteredResults = results.slice(0, 5).filter(r => r.title && r.url);
-
-    // Se não achou nada, tenta padrão alternativo
-    if (filteredResults.length === 0) {
-      const altRegex = /<a[^>]*href="([^"]*)"[^>]*class="[^"]*result[^"]*"[^>]*>([^<<]*)<<\/a>/g;
-      let altMatch;
-      while ((altMatch = altRegex.exec(html)) !== null) {
-        if (altMatch[1].startsWith('http')) {
-          filteredResults.push({
-            title: altMatch[2].trim() || 'Sem título',
-            url: altMatch[1],
-            snippet: 'Clique para ver mais.'
-          });
-        }
-      }
-    }
-
-    res.json({ success: true, results: filteredResults });
+    res.json({ success: true, results: results.slice(0, 5).filter(r => r.title && r.url) });
   } catch (error) {
     console.error('Search error:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Busca temporariamente indisponível. O DuckDuckGo pode estar bloqueando requisições.',
+      error: 'Busca temporariamente indisponível.',
       details: error.message
     });
   }
@@ -794,12 +706,15 @@ app.get('/api/admin/bans', async (req, res) => {
 
 // ===== HEALTH =====
 app.get('/api/health', async (req, res) => {
-  const providers = [];
-  if (deepseek) providers.push('deepseek');
-  if (openrouter) providers.push('openrouter');
-  if (groq) providers.push('groq');
-  if (gemini) providers.push('gemini');
-  res.json({ success: true, status: 'online', providers, timestamp: new Date().toISOString() });
+  const activeProviders = sortedProviders.map(([k]) => k);
+  res.json({ 
+    success: true, 
+    status: 'online', 
+    providers: activeProviders,
+    models: sortedProviders.map(([_, v]) => v.name),
+    count: activeProviders.length,
+    timestamp: new Date().toISOString() 
+  });
 });
 
 // ===== ERROR HANDLERS =====
@@ -813,6 +728,6 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 StrawField Backend rodando na porta ${PORT}`);
-  const p = [deepseek ? 'DeepSeek' : '', openrouter ? 'OpenRouter' : '', groq ? 'Groq' : '', gemini ? 'Gemini' : ''].filter(Boolean);
-  console.log(`   Provedores: ${p.join(', ') || 'NENHUM — configure o .env!'}`);
+  const p = sortedProviders.map(([_, v]) => `${v.name} (${v.model})`);
+  console.log(`   IAs: ${p.join(' → ') || 'NENHUMA — configure o .env!'}`);
 });
