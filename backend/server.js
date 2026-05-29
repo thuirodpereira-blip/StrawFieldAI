@@ -3,7 +3,6 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
-import morgan from 'morgan';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs/promises';
@@ -27,18 +26,14 @@ const SYSTEM_PROMPT = `Você é a StrawField, uma assistente de IA inteligente, 
 - Teste mentalmente o código antes de enviar.
 - Se não tiver certeza, diga "não sei" em vez de inventar.`;
 
-// ===== WAKE-UP =====
-app.get('/api/wake', (req, res) => {
-  res.json({ success: true, status: 'awake', timestamp: new Date().toISOString() });
-});
-
+// ===== CORS =====
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
-app.use(morgan('combined'));
 
+// Rate limit generoso
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 300,
   message: { success: false, error: 'Muitas requisições. Aguarde.' },
 });
 app.use('/api/', limiter);
@@ -55,41 +50,94 @@ async function writeJson(file, data) {
   await fs.writeFile(path.join(DATA_DIR, file), JSON.stringify(data, null, 2), 'utf-8');
 }
 
-// ===== INICIALIZA APENAS AS 3 MELHORES APIs =====
+// ===== INICIALIZA PROVIDERS =====
 const providers = {};
+const providerStatus = {};
 
-// 1. GEMINI 2.5 PRO (PRIORIDADE MÁXIMA - MAIS INTELIGENTE)
+// 1. GEMINI (PRIORIDADE 1 - mais estável e gratuito)
 if (process.env.GEMINI_API_KEY?.trim()) {
-  providers.gemini = new OpenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai'
-  });
-  console.log('✅ Gemini 2.5 Pro carregado');
+  try {
+    providers.gemini = new OpenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai'
+    });
+    providerStatus.gemini = { active: true, name: 'Gemini 2.5 Flash', model: 'gemini-2.5-flash-preview-05-20' };
+    console.log('✅ Gemini carregado');
+  } catch (e) {
+    console.error('❌ Gemini falhou:', e.message);
+  }
 }
 
-// 2. OPENROUTER - LLAMA 4 MAVERICK FREE (SEGUNDA MELHOR)
+// 2. OPENROUTER (modelos free - PRIORIDADE 2)
 if (process.env.OPENROUTER_API_KEY?.trim()) {
-  providers.openrouter = new OpenAI({
-    apiKey: process.env.OPENROUTER_API_KEY,
-    baseURL: 'https://openrouter.ai/api/v1',
-    defaultHeaders: {
-      'HTTP-Referer': process.env.FRONTEND_URL || 'https://strawfield.vercel.app',
-      'X-Title': 'StrawField AI',
-    },
-  });
-  console.log('✅ OpenRouter (Llama 4) carregado');
+  try {
+    providers.openrouter = new OpenAI({
+      apiKey: process.env.OPENROUTER_API_KEY,
+      baseURL: 'https://openrouter.ai/api/v1',
+      defaultHeaders: {
+        'HTTP-Referer': process.env.FRONTEND_URL || 'https://strawfield.vercel.app',
+        'X-Title': 'StrawField AI',
+      },
+    });
+    providerStatus.openrouter = { active: true, name: 'OpenRouter', model: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash-preview:free' };
+    console.log('✅ OpenRouter carregado');
+  } catch (e) {
+    console.error('❌ OpenRouter falhou:', e.message);
+  }
 }
 
-// 3. GROQ - LLAMA 3.3 70B (RÁPIDO, TERCEIRA OPÇÃO)
+// 3. GROQ (rápido mas rate limit - PRIORIDADE 3)
 if (process.env.GROQ_API_KEY?.trim()) {
-  providers.groq = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
-    baseURL: 'https://api.groq.com/openai/v1'
-  });
-  console.log('✅ Groq (Llama 3.3 70B) carregado');
+  try {
+    providers.groq = new OpenAI({
+      apiKey: process.env.GROQ_API_KEY,
+      baseURL: 'https://api.groq.com/openai/v1'
+    });
+    providerStatus.groq = { active: true, name: 'Groq', model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile' };
+    console.log('✅ Groq carregado');
+  } catch (e) {
+    console.error('❌ Groq falhou:', e.message);
+  }
 }
 
-const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
+// 4. DEEPSEEK (barato - PRIORIDADE 4)
+if (process.env.DEEPSEEK_API_KEY?.trim()) {
+  try {
+    providers.deepseek = new OpenAI({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseURL: 'https://api.deepseek.com/v1'
+    });
+    providerStatus.deepseek = { active: true, name: 'DeepSeek', model: process.env.DEEPSEEK_MODEL || 'deepseek-chat' };
+    console.log('✅ DeepSeek carregado');
+  } catch (e) {
+    console.error('❌ DeepSeek falhou:', e.message);
+  }
+}
+
+const activeProviders = Object.entries(providerStatus).filter(([_, s]) => s.active);
+console.log(`📊 Providers ativos: ${activeProviders.map(([k, v]) => `${v.name} (${v.model})`).join(' → ') || 'NENHUM'}`);
+
+// ===== WAKE ENDPOINT (NÃO DORME!) =====
+app.get('/api/wake', (req, res) => {
+  res.json({ 
+    success: true, 
+    status: 'awake', 
+    timestamp: new Date().toISOString(),
+    providers: activeProviders.map(([k, v]) => ({ name: v.name, model: v.model }))
+  });
+});
+
+// ===== HEALTH CHECK =====
+app.get('/api/health', async (req, res) => {
+  res.json({ 
+    success: true, 
+    status: 'online', 
+    providers: activeProviders.map(([k]) => k),
+    models: activeProviders.map(([_, v]) => `${v.name}: ${v.model}`),
+    count: activeProviders.length,
+    timestamp: new Date().toISOString() 
+  });
+});
 
 const registerSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
@@ -105,7 +153,6 @@ const loginSchema = z.object({
 const messageSchema = z.object({
   message: z.string().min(1).max(8000),
   agent: z.string().optional(),
-  stream: z.boolean().optional(),
 });
 
 const FORBIDDEN = new Set([
@@ -120,102 +167,54 @@ const FORBIDDEN = new Set([
 ]);
 
 function moderate(text) {
-  const words = text.toLowerCase().replace(/[.,!?;:"'()\[\]{}\-–—@#$%&*+=\/\\|<>~`]/g, ' ').split(/\s+/).filter(w => w);
+  const words = text.toLowerCase().replace(/[.,!?;:"'()\[\]{}\-–—@#$%&*+=\/\|<>~`]/g, ' ').split(/\s+/).filter(w => w);
   for (const w of words) if (FORBIDDEN.has(w)) return false;
   return true;
 }
 
 const SAFE_FALLBACK = 'Prefiro manter nossa conversa no respeito. Estou aqui para ajudar de forma construtiva. O que você precisa?';
 
-// ===== CONFIGURAÇÃO DOS 3 PROVIDERS =====
-const PROVIDER_CONFIG = {
-  gemini: {
-    name: 'Gemini 2.5 Pro',
-    model: 'gemini-2.5-pro-preview-03-25', // MODELO MAIS INTELIGENTE DA GOOGLE
-    priority: 1,
-    client: providers.gemini
-  },
-  openrouter: {
-    name: 'Llama 4 Maverick',
-    model: 'meta-llama/llama-4-maverick:free', // LLAMA 4 FREE!
-    priority: 2,
-    client: providers.openrouter
-  },
-  groq: {
-    name: 'Llama 3.3 70B',
-    model: 'llama-3.3-70b-versatile',
-    priority: 3,
-    client: providers.groq
-  }
-};
-
-// Ordena por prioridade (inteligência)
-const sortedProviders = Object.entries(PROVIDER_CONFIG)
-  .filter(([_, config]) => config.client)
-  .sort((a, b) => a[1].priority - b[1].priority);
-
-console.log(`📊 Providers ativos: ${sortedProviders.map(([k]) => k).join(', ') || 'NENHUM'}`);
-
-// ===== CHAMADA ÀS IAs COM FALLBACK INTELIGENTE =====
+// ===== CALL AI COM FALLBACK =====
 async function callAI(messages) {
   const errors = [];
-  
-  for (const [key, config] of sortedProviders) {
+
+  for (const [key, config] of activeProviders) {
     try {
       console.log(`🔄 Tentando ${config.name}...`);
-      const c = await config.client.chat.completions.create({
+      const client = providers[key];
+      const c = await client.chat.completions.create({
         model: config.model,
         messages,
         temperature: 0.7,
         max_tokens: 4096,
       });
-      
+
       const msg = c.choices[0]?.message;
       let content = msg?.content || '';
       let thinking = msg?.reasoning_content || null;
-      
-      // Parse thinking tags
-      if (!thinking && content.includes('<think>')) {
-        const thinkMatch = content.match(/<<think>([\s\S]*?)<<\/think>/);
+
+      if (!thinking && content.includes('<thinking>')) {
+        const thinkMatch = content.match(/<thinking>([\s\S]*?)<\/thinking>/);
         if (thinkMatch) {
           thinking = thinkMatch[1].trim();
-          content = content.replace(/<<think>[\s\S]*?<\/think>/, '').trim();
+          content = content.replace(/<thinking>[\s\S]*?<\/thinking>/, '').trim();
         }
       }
-      
+
       console.log(`✅ ${config.name} respondeu!`);
       return { content, thinking, model: config.name };
-      
+
     } catch (e) {
       console.warn(`❌ ${config.name} falhou: ${e.message}`);
       errors.push(`${config.name}: ${e.message}`);
-      
-      // Se for rate limit, quota ou erro de conexão, continua pro próximo
+
       if (e.message.includes('rate') || e.message.includes('429') || 
           e.message.includes('quota') || e.message.includes('limit') ||
-          e.message.includes('ECONNREFUSED') || e.message.includes('fetch')) {
+          e.message.includes('ECONNREFUSED') || e.message.includes('fetch') ||
+          e.message.includes('401') || e.message.includes('auth')) {
         continue;
       }
     }
-  }
-  
-  // Fallback final: Ollama local
-  try {
-    console.log('🔄 Tentando Ollama local...');
-    const res = await fetch(`${ollamaUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        model: process.env.OLLAMA_MODEL || 'llama3.2', 
-        messages, 
-        stream: false 
-      }),
-    });
-    if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
-    const data = await res.json();
-    return { content: data.message?.content, thinking: null, model: 'Ollama Local' };
-  } catch (e) {
-    errors.push(`Ollama: ${e.message}`);
   }
 
   throw new Error(`❌ TODAS as IAs falharam!\n${errors.join('\n')}`);
@@ -223,54 +222,52 @@ async function callAI(messages) {
 
 // ===== STREAMING COM FALLBACK =====
 async function callAIStream(messages, res) {
-  for (const [key, config] of sortedProviders) {
+  for (const [key, config] of activeProviders) {
     try {
       console.log(`🔄 Streaming com ${config.name}...`);
-      const stream = await config.client.chat.completions.create({
+      const client = providers[key];
+      const stream = await client.chat.completions.create({
         model: config.model,
         messages,
         temperature: 0.7,
         max_tokens: 4096,
         stream: true,
       });
-      
+
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
         const content = delta?.content || '';
         const reasoning = delta?.reasoning_content || '';
-        
+
         if (reasoning) {
-          res.write(`data: ${JSON.stringify({ thinking: reasoning })}\\n\\n`);
+          res.write(`data: ${JSON.stringify({ thinking: reasoning })}\n\n`);
         }
         if (content) {
-          res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
+          res.write(`data: ${JSON.stringify({ content })}\n\n`);
         }
       }
-      
-      res.write('data: [DONE]\\n\\n');
+
+      res.write('data: [DONE]\n\n');
       console.log(`✅ ${config.name} streaming OK!`);
-      return;
-      
+      return config.name;
+
     } catch (e) {
       console.warn(`❌ ${config.name} streaming falhou: ${e.message}`);
-      if (e.message.includes('rate') || e.message.includes('429') || 
-          e.message.includes('quota') || e.message.includes('ECONNREFUSED')) {
-        continue;
-      }
+      continue;
     }
   }
-  
-  res.write(`data: ${JSON.stringify({ error: 'Todas as IAs falharam no streaming.' })}\\n\\n`);
+
+  res.write(`data: ${JSON.stringify({ error: 'Todas as IAs falharam no streaming.' })}\n\n`);
+  return null;
 }
 
-// ===== AUTH ROUTES =====
+// ===== AUTH =====
 app.post('/api/auth/register', async (req, res) => {
   const parse = registerSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ success: false, error: parse.error.issues.map(i => i.message).join('; ') });
 
   const { username, password, displayName } = parse.data;
   const users = await readJson('users.json');
-
   if (users[username]) return res.status(409).json({ success: false, error: 'Username já existe.' });
 
   const hash = await bcrypt.hash(password, 10);
@@ -292,8 +289,8 @@ app.post('/api/auth/login', async (req, res) => {
   const { username, password } = parse.data;
   const users = await readJson('users.json');
   const user = users[username];
-
   if (!user) return res.status(401).json({ success: false, error: 'Usuário não encontrado.' });
+
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ success: false, error: 'Senha incorreta.' });
 
@@ -417,7 +414,7 @@ app.delete('/api/chats/:id/messages/:index', async (req, res) => {
   res.json({ success: true, messages: chat.messages });
 });
 
-// ===== STREAMING ROUTE =====
+// ===== STREAMING =====
 app.post('/api/chats/:id/message/stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -425,20 +422,20 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
 
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) {
-    res.write(`data: ${JSON.stringify({ error: 'Não autenticado.' })}\\n\\n`);
+    res.write(`data: ${JSON.stringify({ error: 'Não autenticado.' })}\n\n`);
     return res.end();
   }
 
   const users = await readJson('users.json');
   const user = Object.values(users).find(u => u.token === token);
   if (!user) {
-    res.write(`data: ${JSON.stringify({ error: 'Token inválido.' })}\\n\\n`);
+    res.write(`data: ${JSON.stringify({ error: 'Token inválido.' })}\n\n`);
     return res.end();
   }
 
   const parse = messageSchema.safeParse(req.body);
   if (!parse.success) {
-    res.write(`data: ${JSON.stringify({ error: 'Mensagem inválida.' })}\\n\\n`);
+    res.write(`data: ${JSON.stringify({ error: 'Mensagem inválida.' })}\n\n`);
     return res.end();
   }
 
@@ -446,7 +443,7 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
   const chats = await readJson('chats.json');
   const chat = (chats[user.username] || []).find(c => c.id === req.params.id);
   if (!chat) {
-    res.write(`data: ${JSON.stringify({ error: 'Chat não encontrado.' })}\\n\\n`);
+    res.write(`data: ${JSON.stringify({ error: 'Chat não encontrado.' })}\n\n`);
     return res.end();
   }
 
@@ -458,73 +455,10 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
   try {
     let fullResponse = '';
     let fullThinking = '';
-    let modelUsed = '';
+    const modelUsed = await callAIStream(messages, res);
 
-    for (const [key, config] of sortedProviders) {
-      try {
-        const stream = await config.client.chat.completions.create({
-          model: config.model,
-          messages,
-          temperature: 0.7,
-          max_tokens: 4096,
-          stream: true,
-        });
-        
-        modelUsed = config.name;
-        let thinkBuffer = '';
-
-        for await (const chunk of stream) {
-          const delta = chunk.choices[0]?.delta;
-          const content = delta?.content || '';
-          const reasoning = delta?.reasoning_content || '';
-          
-          if (reasoning) {
-            fullThinking += reasoning;
-            res.write(`data: ${JSON.stringify({ thinking: reasoning })}\\n\\n`);
-          }
-          
-          if (content.includes('<think>') || thinkBuffer) {
-            thinkBuffer += content;
-            if (thinkBuffer.includes('</think>')) {
-              const match = thinkBuffer.match(/<<think>([\s\S]*?)<<\/think>/);
-              if (match) {
-                fullThinking += match[1];
-                res.write(`data: ${JSON.stringify({ thinking: match[1] })}\\n\\n`);
-                const after = thinkBuffer.replace(/<<think>[\s\S]*?<\/think>/, '');
-                if (after) {
-                  fullResponse += after;
-                  res.write(`data: ${JSON.stringify({ content: after })}\\n\\n`);
-                }
-                thinkBuffer = '';
-                continue;
-              }
-            }
-            if (thinkBuffer.length > 10000) {
-              fullResponse += thinkBuffer;
-              res.write(`data: ${JSON.stringify({ content: thinkBuffer })}\\n\\n`);
-              thinkBuffer = '';
-            }
-            continue;
-          }
-          
-          if (content) {
-            fullResponse += content;
-            res.write(`data: ${JSON.stringify({ content })}\\n\\n`);
-          }
-        }
-        
-        break; // Sai do loop se deu certo
-        
-      } catch (e) {
-        console.warn(`❌ ${config.name} streaming falhou: ${e.message}`);
-        continue;
-      }
-    }
-
-    if (thinkBuffer) fullResponse += thinkBuffer;
-
-    res.write('data: [DONE]\\n\\n');
-    res.write(`data: ${JSON.stringify({ model: modelUsed })}\\n\\n`);
+    res.write('data: [DONE]\n\n');
+    if (modelUsed) res.write(`data: ${JSON.stringify({ model: modelUsed })}\n\n`);
 
     if (fullResponse) {
       if (!moderate(fullResponse)) fullResponse = SAFE_FALLBACK;
@@ -545,12 +479,12 @@ app.post('/api/chats/:id/message/stream', async (req, res) => {
     res.end();
   } catch (error) {
     console.error('Erro IA:', error);
-    res.write(`data: ${JSON.stringify({ error: error.message || 'Erro interno. Tente novamente.' })}\\n\\n`);
+    res.write(`data: ${JSON.stringify({ error: error.message || 'Erro interno.' })}\n\n`);
     res.end();
   }
 });
 
-// ===== NORMAL MESSAGE ROUTE =====
+// ===== NORMAL MESSAGE =====
 app.post('/api/chats/:id/message', async (req, res) => {
   const timestamp = new Date().toISOString();
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -615,19 +549,18 @@ app.get('/api/search', async (req, res) => {
   try {
     const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
       headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html'
       }
     });
-    
+
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    
     const html = await response.text();
-    
+
     const results = [];
-    const linkRegex = /<a rel="nofollow" class="result__a" href="([^"]+)">([^<<]+)<\/a>/g;
-    const snippetRegex = /<a class="result__snippet"[^>]*>([^<<]+)<\/a>/g;
-    
+    const linkRegex = /<a rel="nofollow" class="result__a" href="([^"]+)">([^<]+)<\/a>/g;
+    const snippetRegex = /<a class="result__snippet"[^>]*>([^<]+)<\/a>/g;
+
     let linkMatch;
     while ((linkMatch = linkRegex.exec(html)) !== null) {
       results.push({
@@ -636,7 +569,7 @@ app.get('/api/search', async (req, res) => {
         snippet: ''
       });
     }
-    
+
     let i = 0;
     let snippetMatch;
     while ((snippetMatch = snippetRegex.exec(html)) !== null && i < results.length) {
@@ -652,15 +585,11 @@ app.get('/api/search', async (req, res) => {
     res.json({ success: true, results: results.slice(0, 5).filter(r => r.title && r.url) });
   } catch (error) {
     console.error('Search error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Busca temporariamente indisponível.',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Busca indisponível.', details: error.message });
   }
 });
 
-// ===== ADMIN / BAN =====
+// ===== ADMIN =====
 app.post('/api/admin/ban', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   const users = await readJson('users.json');
@@ -671,7 +600,7 @@ app.post('/api/admin/ban', async (req, res) => {
   if (!fingerprint) return res.status(400).json({ success: false, error: 'Fingerprint obrigatório.' });
 
   const currentFp = req.headers['x-device-fingerprint'];
-  if (fingerprint === currentFp) return res.status(400).json({ success: false, error: 'Você não pode se banir! 🍓' });
+  if (fingerprint === currentFp) return res.status(400).json({ success: false, error: 'Você não pode se banir!' });
 
   const bans = await readJson('bans.json');
   bans[fingerprint] = { bannedAt: new Date().toISOString(), by: user.username };
@@ -704,19 +633,6 @@ app.get('/api/admin/bans', async (req, res) => {
   res.json({ success: true, bans });
 });
 
-// ===== HEALTH =====
-app.get('/api/health', async (req, res) => {
-  const activeProviders = sortedProviders.map(([k]) => k);
-  res.json({ 
-    success: true, 
-    status: 'online', 
-    providers: activeProviders,
-    models: sortedProviders.map(([_, v]) => v.name),
-    count: activeProviders.length,
-    timestamp: new Date().toISOString() 
-  });
-});
-
 // ===== ERROR HANDLERS =====
 app.use((req, res) => res.status(404).json({ success: false, error: 'Rota não encontrada.' }));
 app.use((err, req, res, next) => {
@@ -728,6 +644,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 StrawField Backend rodando na porta ${PORT}`);
-  const p = sortedProviders.map(([_, v]) => `${v.name} (${v.model})`);
-  console.log(`   IAs: ${p.join(' → ') || 'NENHUMA — configure o .env!'}`);
+  console.log(`   IAs: ${activeProviders.map(([_, v]) => `${v.name} (${v.model})`).join(' → ') || 'NENHUMA'}`);
 });
